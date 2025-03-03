@@ -7,7 +7,7 @@ Below is a plan broken down into **small tasks** that an AI agent can execute **
 ## Phase 1: Repo Setup & Environment Preparation ✅
 
 1. **Fork & Clone**: Fork `AstralProtocol/api` on GitHub, then clone to local.
-2. **Create a Branch**: Name it `feature/ogc-api-implementation`.
+2. **Create a Branch**: Name it `feature/supabase-integration`.
 3. **Create `/backend` Folder**: Inside the repo, make a new folder `backend/`.
 4. **Add `.env.example`**: Include placeholders for DB connection string, EAS endpoints, etc.
 5. **Check for Existing Docker Compose**: If none, create `docker-compose.yml` in `/backend`.
@@ -71,76 +71,60 @@ Below is a plan broken down into **small tasks** that an AI agent can execute **
 
 ---
 
-## Phase 4: REST API (OGC API) Implementation ⬜
+## Phase 4: Supabase API Integration & Enhancement ✅
 
-1. **Choose Framework**: Express.js, Fastify, or Flask (Python). For Node, Express is common.
-2. **Add Routes**:
-   - `/` (Landing Page): Return JSON with API info & links.
-   - `/conformance`: Return an array of OGC conformance URIs.
-   - `/collections`: List available data collections (e.g., `location-proofs`).
-   - `/collections/location-proofs`: Return metadata about the collection.
-   - `/collections/location-proofs/items`: Return an array of location proofs in GeoJSON FeatureCollection.
-     - Support `bbox` & `datetime` query params.
-3. **GeoJSON Formatting**:
-   - Convert each row into a `Feature` with `id`, `geometry`, `properties`.
-   - `geometry` from DB `geometry` column (could be any valid GeoJSON geometry type).
-   - `properties` include `chain`, `prover`, etc.
-4. **Pagination**: Add `limit` & `offset` or a `next` link.
-5. **OGC Validation**:
-   - Download OGC API validator.
-   - Test each endpoint.
-6. **Testing**:
-   - Write unit tests for route handlers.
-   - Use a mock DB or test DB.
-7. **Push Changes** to GitHub.
+1. **Extend Supabase Service**:
+   - Complete CRUD operations using Supabase client
+   - Enable PostGIS-specific queries through Supabase RPC
+   - Set up appropriate Row Level Security (RLS) policies
+   - Create helper functions for common queries
+
+2. **Add Express Endpoints**:
+   - `/` (Landing Page): Return JSON with API info.
+   - `/health`: Simple health check endpoint.
+   - `/sync` (Admin): Trigger manual sync of attestations.
+   - `/api/v0/config`: Return available chains and metadata.
+
+3. **Historical Attestation Sync**:
+   - Create a batch processing script to fetch all historical attestations
+   - Support resumable fetch operations if interrupted
+   - Track progress and provide status endpoint
+
+4. **Spatial Query Support** ✅:
+   - Add spatial filtering parameters (bbox, near, etc.)
+   - Create PostGIS functions for advanced spatial operations
+   - Expose these through Supabase RPC or API endpoints
+
+5. **Documentation**:
+   - Document Supabase schema and tables
+   - Create examples of API usage through Supabase client
+   - Document custom endpoints and functionality
+
+6. **Push Changes** to GitHub.
 
 ---
 
-## Phase 5: GraphQL API with Apollo ⬜
+## Phase 5: Background Sync & Monitoring ⬜
 
-1. **Install Dependencies**: `npm install apollo-server graphql` (or relevant libs).
-2. **Create `schema.graphql`**:
-   ```graphql
-   # Example geometry type, storing as a JSON object (GeoJSON)
-   scalar GeoJSON
+1. **Background Worker Implementation**:
+   - Create dedicated worker to sync attestations periodically
+   - Support multiple chains with separate checkpoints
+   - Add retry mechanism for failed fetches
+   - Implement deduplication logic
 
-   type LocationProof {
-     uid: ID!
-     chain: String
-     prover: String
-     subject: String
-     eventTimestamp: String
-     revoked: Boolean
-     geometry: GeoJSON    # can be a Point, LineString, Polygon, etc.
-     locationType: String # tracks the geometry type
-     # etc.
-   }
+2. **Monitoring & Alerts**:
+   - Add detailed logging with structured format
+   - Create metrics collection for sync operations
+   - Add alerts for sync failures or service interruptions
+   - Track Supabase API usage and quotas
 
-   input ProofFilter {
-     chain: String
-     prover: String
-     bbox: [Float]
-     fromDate: String
-     toDate: String
-   }
+3. **Admin Panel**:
+   - Create simple admin interface to view sync status
+   - Add ability to force resync of specific chains
+   - Show statistics about attestation counts
+   - Monitor database size and performance
 
-   type Query {
-     locationProofs(filter: ProofFilter, limit: Int, offset: Int): [LocationProof]
-     locationProof(uid: ID!): LocationProof
-   }
-   ```
-3. **Implement Resolvers**:
-   - `Query.locationProofs`:
-     - Parse filter, query DB.
-     - Return geometry as a valid GeoJSON object.
-   - `Query.locationProof`: fetch by `uid`.
-4. **Set Up Apollo Server**:
-   - In `index.js` or `server.js`, create `new ApolloServer({ typeDefs, resolvers })`.
-   - Merge with Express if needed or run standalone.
-5. **Add Depth Limiting**: e.g., `graphql-depth-limit` or Apollo’s built-in.
-6. **Integration Tests**:
-   - Test queries & verify DB results (e.g., geometry field is returned correctly).
-7. **Push Changes** to GitHub.
+4. **Push Changes** to GitHub.
 
 ---
 
@@ -166,37 +150,71 @@ Below is a plan broken down into **small tasks** that an AI agent can execute **
 
 ---
 
-## Phase 7: Scaling & Enhancements ⬜
+## Phase 7: Deployment & Production Readiness ⬜
 
-1. **Enable Subscriptions** (optional):
-   - Use Apollo Server’s subscription or a separate service.
-   - Connect to Supabase Realtime or DB triggers.
-2. **Multi-chain Support**:
-   - Expand ingestion script to handle multiple chains.
-   - Keep a separate checkpoint per chain.
-3. **Advanced OGC Filter**:
-   - Implement advanced attribute-based filtering if needed.
-4. **Security & Auth**:
-   - Add API keys or OAuth if certain endpoints require protection.
-5. **Cost Optimization**:
-   - Monitor Supabase usage.
-   - Scale database plan as needed.
-6. **Documentation**:
-   - Write docs for developers (OpenAPI, GraphQL schema docs).
+1. **Production Environment Setup**:
+   - Configure production Supabase project
+   - Set up proper backups and disaster recovery
+   - Implement security best practices
+
+2. **Performance Optimization**:
+   - Add appropriate indexes for common queries
+   - Implement caching where appropriate
+   - Optimize batch operations for large datasets
+
+3. **Documentation**: 
+   - Finalize API documentation
+   - Create deployment guide
+   - Document maintenance procedures
+
+4. **Security Review**:
+   - Audit authentication mechanisms
+   - Review access controls and RLS policies
+   - Check for potential vulnerabilities
+
+5. **Launch Preparation**:
+   - Final testing in staging environment
+   - Plan for monitoring during launch
+   - Create rollback procedures if needed
 
 ---
 
-## Phase 8: Final Review & Production Launch ⬜
+## Future Work
 
-1. **Security Audit**: Check environment vars, secrets, logs.
-2. **Load Test**: Use tools like k6 or Artillery to test concurrency.
-3. **Fix Bottlenecks**: Query optimization, indexing, caching.
-4. **Announce Beta**: Publish endpoints, get feedback.
-5. **Production**: Mark main branch stable, finalize version.
-6. **Continual Maintenance**: Monitor logs, bug reports, scale as needed.
+### OGC API Features Implementation
+1. **Choose Framework**: Express.js, Fastify, or Flask (Python). For Node, Express is common.
+2. **Add Routes**:
+   - `/` (Landing Page): Return JSON with API info & links.
+   - `/conformance`: Return an array of OGC conformance URIs.
+   - `/collections`: List available data collections (e.g., `location-proofs`).
+   - `/collections/location-proofs`: Return metadata about the collection.
+   - `/collections/location-proofs/items`: Return an array of location proofs in GeoJSON FeatureCollection.
+     - Support `bbox` & `datetime` query params.
+3. **GeoJSON Formatting**:
+   - Convert each row into a `Feature` with `id`, `geometry`, `properties`.
+   - `geometry` from DB `geometry` column (could be any valid GeoJSON geometry type).
+   - `properties` include `chain`, `prover`, etc.
+4. **Pagination**: Add `limit` & `offset` or a `next` link.
+5. **OGC Validation**:
+   - Download OGC API validator.
+   - Test each endpoint.
+
+### GraphQL API with Apollo
+1. **Install Dependencies**: `npm install apollo-server graphql` (or relevant libs).
+2. **Create `schema.graphql`** with appropriate types and queries.
+3. **Implement Resolvers** for queries and mutations.
+4. **Set Up Apollo Server** and merge with existing Express app.
+5. **Add Security Features** like rate limiting and depth limiting.
+6. **Create Documentation** for GraphQL API.
+
+### Advanced Features
+1. **Enable Subscriptions** for real-time updates.
+2. **Advanced Filtering** for location data.
+3. **Aggregation APIs** for analytics.
+4. **Batch Operations** for bulk data processing.
+5. **Multi-tenant Support** if needed.
 
 ---
 
 ## Conclusion
-These smaller, more granular tasks should help AI agents (e.g., Cursor Agents) **retain context** and execute step-by-step without overwhelming complexity. Each phase builds on the previous, guiding you from initial repo setup to a fully deployed, production-grade, and scalable OGC/GraphQL API.
-
+This implementation plan emphasizes getting a functional service deployed quickly with Supabase's built-in API capabilities. The plan prioritizes syncing attestations and making data available, while deferring the custom OGC API and GraphQL implementations to future work. This approach allows for faster time-to-market while maintaining the flexibility to add more specialized APIs later.
