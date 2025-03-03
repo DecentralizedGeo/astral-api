@@ -1,11 +1,12 @@
 import { Pool, PoolClient } from 'pg';
 import { config } from '../config';
 import { LocationProof, LocationProofQueryParams } from '../models/types';
+import { logger } from '../utils/logger';
 
 /**
  * Database service for managing location proof data
  */
-class DatabaseService {
+export class DbService {
   private pool: Pool;
 
   constructor() {
@@ -15,7 +16,7 @@ class DatabaseService {
 
     // Test connection on initialization
     this.pool.on('error', (err) => {
-      console.error('Unexpected error on idle client', err);
+      logger.error('Unexpected error on idle client', err);
       process.exit(-1);
     });
   }
@@ -28,9 +29,9 @@ class DatabaseService {
   }
 
   /**
-   * Insert a new location proof into the database
+   * Create a new location proof in the database
    */
-  async insertLocationProof(proof: Omit<LocationProof, 'created_at' | 'updated_at'>): Promise<LocationProof> {
+  async createLocationProof(proof: Omit<LocationProof, 'created_at' | 'updated_at'> | LocationProof): Promise<LocationProof> {
     const client = await this.getClient();
     
     try {
@@ -38,32 +39,65 @@ class DatabaseService {
       
       // Create the geometry from longitude and latitude if available
       let geometrySql = 'NULL';
-      if (proof.longitude !== undefined && proof.latitude !== undefined) {
-        geometrySql = `ST_SetSRID(ST_MakePoint($1, $2), 4326)`;
+      let hasCoordinates = false;
+      
+      if (proof.longitude && proof.latitude) {
+        // Both coordinates are available, use them to create a geometry
+        geometrySql = `ST_SetSRID(ST_MakePoint(CAST($1 AS NUMERIC), CAST($2 AS NUMERIC)), 4326)`;
+        hasCoordinates = true;
       }
       
-      const query = `
-        INSERT INTO location_proofs (
-          uid, chain, prover, subject, timestamp, event_timestamp, 
-          srs, location_type, location, longitude, latitude, geometry,
-          recipe_types, recipe_payloads, media_types, media_data, memo, revoked
-        ) VALUES (
-          $3, $4, $5, $6, $7, $8, 
-          $9, $10, $11, $1, $2, ${geometrySql},
-          $12, $13, $14, $15, $16, $17
-        )
-        RETURNING *;
-      `;
+      // Construct query based on whether we have coordinates
+      let query;
+      if (hasCoordinates) {
+        query = `
+          INSERT INTO location_proofs (
+            uid, chain, prover, subject, timestamp, event_timestamp, 
+            srs, location_type, location, longitude, latitude, geometry,
+            recipe_types, recipe_payloads, media_types, media_data, memo, revoked
+          ) VALUES (
+            $3, $4, $5, $6, $7, $8, 
+            $9, $10, $11, 
+            CAST($1 AS NUMERIC), 
+            CAST($2 AS NUMERIC), 
+            ${geometrySql},
+            $12, $13, $14, $15, $16, $17
+          )
+          RETURNING *;
+        `;
+      } else {
+        // If no coordinates, don't attempt to insert them
+        query = `
+          INSERT INTO location_proofs (
+            uid, chain, prover, subject, timestamp, event_timestamp, 
+            srs, location_type, location,
+            recipe_types, recipe_payloads, media_types, media_data, memo, revoked
+          ) VALUES (
+            $3, $4, $5, $6, $7, $8, 
+            $9, $10, $11, 
+            $12, $13, $14, $15, $16, $17
+          )
+          RETURNING *;
+        `;
+      }
+      
+      // Keep the original string values for coordinates
+      const longitude = proof.longitude;
+      const latitude = proof.latitude;
+      
+      // Convert dates to ISO strings to ensure proper PostgreSQL formatting
+      const timestamp = proof.timestamp ? proof.timestamp.toISOString() : null;
+      const event_timestamp = proof.event_timestamp ? proof.event_timestamp.toISOString() : new Date().toISOString();
       
       const values = [
-        proof.longitude, 
-        proof.latitude,
+        longitude, 
+        latitude,
         proof.uid,
         proof.chain,
         proof.prover,
         proof.subject || null,
-        proof.timestamp || null,
-        proof.event_timestamp,
+        timestamp,
+        event_timestamp,
         proof.srs || null,
         proof.location_type,
         proof.location,
@@ -81,7 +115,7 @@ class DatabaseService {
       return result.rows[0] as LocationProof;
     } catch (error) {
       await client.query('ROLLBACK');
-      console.error('Error inserting location proof:', error);
+      logger.error('Error creating location proof:', error);
       throw error;
     } finally {
       client.release();
@@ -176,6 +210,36 @@ class DatabaseService {
   }
 
   /**
+   * Get the latest timestamp for a specific chain
+   * Used for tracking the last processed attestation
+   */
+  async getLatestLocationProofTimestamp(chain: string): Promise<Date | null> {
+    const query = 'SELECT MAX(timestamp) as latest_timestamp FROM location_proofs WHERE chain = $1';
+    const result = await this.pool.query(query, [chain]);
+    
+    return result.rows[0].latest_timestamp || null;
+  }
+  
+  /**
+   * Batch update revocation status for location proofs
+   */
+  async batchUpdateRevocations(uids: string[], revoked: boolean = true): Promise<number> {
+    if (uids.length === 0) {
+      return 0;
+    }
+    
+    const placeholders = uids.map((_, idx) => `$${idx + 1}`).join(',');
+    const query = `
+      UPDATE location_proofs 
+      SET revoked = ${revoked}, updated_at = NOW() 
+      WHERE uid IN (${placeholders})
+    `;
+    
+    const result = await this.pool.query(query, uids);
+    return result.rowCount || 0;
+  }
+
+  /**
    * Close the database connection pool
    */
   async close(): Promise<void> {
@@ -183,5 +247,5 @@ class DatabaseService {
   }
 }
 
-// Export a singleton instance
-export const dbService = new DatabaseService();
+// For backward compatibility with existing code
+export const dbService = new DbService();

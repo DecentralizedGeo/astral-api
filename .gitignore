@@ -38,6 +38,10 @@ yarn-error.log*
 # Coverage directory
 coverage/
 .nyc_output/
+**/coverage/
+**/.nyc_output/
+**/lcov-report/
+*.lcov
 
 # Temp files
 tmp/
