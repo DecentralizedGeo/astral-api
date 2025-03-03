@@ -17,6 +17,8 @@
     "worker:eas": "ts-node src/workers/eas-worker.ts",
     "test:eas": "ts-node src/scripts/test-eas-service.ts",
     "test:ingest": "ts-node src/scripts/test-full-ingestion.ts",
+    "test:geojson": "ts-node src/scripts/test-geojson-parsing.ts",
+    "test:base": "ts-node src/scripts/test-base-geojson.ts",
     "debug:eas": "ts-node src/scripts/debug-eas-endpoints.ts"
   },
   "dependencies": {

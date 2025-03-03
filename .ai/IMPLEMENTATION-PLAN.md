@@ -48,7 +48,7 @@ Below is a plan broken down into **small tasks** that an AI agent can execute **
 
 ---
 
-## Phase 3: EAS Attestation Ingestion ⬜
+## Phase 3: EAS Attestation Ingestion ✅
 
 1. **Review EAS Indexer**: Read the [eas-indexing-service docs](https://github.com/ethereum-attestation-service/eas-indexing-service).
 2. **Decide Polling or Indexer**: If polling EAS GraphQL, define your approach.

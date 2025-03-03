@@ -244,44 +244,159 @@ export class EasService {
           let latitude: number | undefined = undefined;
           let longitude: number | undefined = undefined;
           
-          // Try to parse simple coordinate format - could be "lat,lng" or "lng,lat"
-          if (location && location.includes(',')) {
-            const parts = location.split(',');
-            if (parts.length === 2) {
-              try {
-                // Parse both values
-                const val1 = parseFloat(parts[0].trim());
-                const val2 = parseFloat(parts[1].trim());
+          // Try to parse GeoJSON format first
+          if (location) {
+            try {
+              // Try to parse as JSON first
+              const parsedLocation = JSON.parse(location);
+              
+              // Helper function to extract first valid coordinate pair from any GeoJSON geometry
+              const extractFirstCoordinate = (geom: any): [number, number] | null => {
+                if (!geom || !geom.type || !geom.coordinates) return null;
                 
-                // Ensure values are valid numbers
-                if (isNaN(val1) || isNaN(val2)) {
+                switch (geom.type) {
+                  case 'Point':
+                    // Point: [longitude, latitude]
+                    if (Array.isArray(geom.coordinates) && geom.coordinates.length >= 2) {
+                      return [geom.coordinates[0], geom.coordinates[1]];
+                    }
+                    break;
+                    
+                  case 'LineString':
+                    // LineString: [[lon1, lat1], [lon2, lat2], ...]
+                    if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
+                        Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length >= 2) {
+                      return [geom.coordinates[0][0], geom.coordinates[0][1]];
+                    }
+                    break;
+                    
+                  case 'Polygon':
+                    // Polygon: [[[lon1, lat1], [lon2, lat2], ...], [...]]
+                    if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
+                        Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length > 0 &&
+                        Array.isArray(geom.coordinates[0][0]) && geom.coordinates[0][0].length >= 2) {
+                      return [geom.coordinates[0][0][0], geom.coordinates[0][0][1]];
+                    }
+                    break;
+                    
+                  case 'MultiPoint':
+                    // MultiPoint: [[lon1, lat1], [lon2, lat2], ...]
+                    if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
+                        Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length >= 2) {
+                      return [geom.coordinates[0][0], geom.coordinates[0][1]];
+                    }
+                    break;
+                    
+                  case 'MultiLineString':
+                    // MultiLineString: [[[lon1, lat1], [lon2, lat2], ...], [...]]
+                    if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
+                        Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length > 0 &&
+                        Array.isArray(geom.coordinates[0][0]) && geom.coordinates[0][0].length >= 2) {
+                      return [geom.coordinates[0][0][0], geom.coordinates[0][0][1]];
+                    }
+                    break;
+                    
+                  case 'MultiPolygon':
+                    // MultiPolygon: [[[[lon1, lat1], [lon2, lat2], ...], [...]], [...]]
+                    if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
+                        Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length > 0 &&
+                        Array.isArray(geom.coordinates[0][0]) && geom.coordinates[0][0].length > 0 &&
+                        Array.isArray(geom.coordinates[0][0][0]) && geom.coordinates[0][0][0].length >= 2) {
+                      return [geom.coordinates[0][0][0][0], geom.coordinates[0][0][0][1]];
+                    }
+                    break;
+                }
+                
+                return null;
+              };
+              
+              // Determine the type of GeoJSON
+              let coords: [number, number] | null = null;
+              
+              // Direct geometry object
+              if (parsedLocation.type && parsedLocation.coordinates) {
+                coords = extractFirstCoordinate(parsedLocation);
+                if (coords) {
+                  logger.info(`Parsed GeoJSON ${parsedLocation.type}: [${coords[0]}, ${coords[1]}]`);
+                }
+              } 
+              // Feature
+              else if (parsedLocation.type === 'Feature' && parsedLocation.geometry) {
+                coords = extractFirstCoordinate(parsedLocation.geometry);
+                if (coords) {
+                  logger.info(`Parsed GeoJSON Feature with ${parsedLocation.geometry.type}: [${coords[0]}, ${coords[1]}]`);
+                }
+              }
+              // FeatureCollection
+              else if (parsedLocation.type === 'FeatureCollection' && 
+                      Array.isArray(parsedLocation.features) && 
+                      parsedLocation.features.length > 0 &&
+                      parsedLocation.features[0].geometry) {
+                coords = extractFirstCoordinate(parsedLocation.features[0].geometry);
+                if (coords) {
+                  logger.info(`Parsed GeoJSON FeatureCollection (first feature is ${parsedLocation.features[0].geometry.type}): [${coords[0]}, ${coords[1]}]`);
+                }
+              }
+              
+              // If coordinates were found, validate and assign them
+              if (coords) {
+                // GeoJSON coordinates are in [longitude, latitude] order
+                longitude = coords[0];
+                latitude = coords[1];
+                
+                // Validate coordinate ranges
+                if (!latitude || !longitude || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+                  logger.warn(`Invalid GeoJSON coordinates: [${longitude}, ${latitude}]`);
                   latitude = undefined;
                   longitude = undefined;
-                } else {
-                  // Determine which is latitude and which is longitude based on value ranges
-                  // Latitude: -90 to 90, Longitude: -180 to 180
-                  if (Math.abs(val1) <= 90 && Math.abs(val2) <= 180) {
-                    // Standard "lat,lng" format
-                    latitude = val1;
-                    longitude = val2;
-                  } else if (Math.abs(val2) <= 90 && Math.abs(val1) <= 180) {
-                    // Reversed "lng,lat" format
-                    latitude = val2;
-                    longitude = val1;
-                  } else {
-                    // Values out of range, might not be coordinates
-                    logger.warn(`Coordinate values out of range in '${location}'`);
+                }
+              }
+            } catch (e) {
+              // Not JSON or invalid JSON - try other parsing methods
+              // No need to log here, will attempt other formats
+            }
+          }
+          
+          // If GeoJSON parsing didn't work, try simple coordinate format
+          if (latitude === undefined || longitude === undefined) {
+            // Try to parse simple coordinate format - could be "lat,lng" or "lng,lat"
+            if (location && location.includes(',')) {
+              const parts = location.split(',');
+              if (parts.length === 2) {
+                try {
+                  // Parse both values
+                  const val1 = parseFloat(parts[0].trim());
+                  const val2 = parseFloat(parts[1].trim());
+                  
+                  // Ensure values are valid numbers
+                  if (isNaN(val1) || isNaN(val2)) {
                     latitude = undefined;
                     longitude = undefined;
+                  } else {
+                    // Determine which is latitude and which is longitude based on value ranges
+                    // Latitude: -90 to 90, Longitude: -180 to 180
+                    if (Math.abs(val1) <= 90 && Math.abs(val2) <= 180) {
+                      // Standard "lat,lng" format
+                      latitude = val1;
+                      longitude = val2;
+                    } else if (Math.abs(val2) <= 90 && Math.abs(val1) <= 180) {
+                      // Reversed "lng,lat" format
+                      latitude = val2;
+                      longitude = val1;
+                    } else {
+                      // Values out of range, might not be coordinates
+                      logger.warn(`Coordinate values out of range in '${location}'`);
+                      latitude = undefined;
+                      longitude = undefined;
+                    }
                   }
+                } catch (e) {
+                  // Keep as undefined if parsing fails
+                  logger.warn(`Failed to parse coordinates from '${location}'`, e);
                 }
-              } catch (e) {
-                // Keep as undefined if parsing fails
-                logger.warn(`Failed to parse coordinates from '${location}'`, e);
               }
             }
           }
-          // Future: Add parsing for GeoJSON format
           
           // Parse timestamps - handle potential parsing errors
           let timestamp: Date;
