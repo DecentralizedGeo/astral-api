@@ -39,10 +39,16 @@ async function main() {
       logger.info(`  - ${chain}: ${count} attestations ingested`);
     }
     
-    // Check for revocations
-    logger.info('Checking for revocations...');
-    const revokedCount = await easService.checkRevocations();
-    logger.info(`Found ${revokedCount} total revoked attestations`);
+    // Check for revocations using the proper method
+    logger.info('Testing revocation status checking...');
+    const testChain = Object.keys(easService.getGraphQLClients())[0]; // Get first available chain
+    if (testChain) {
+      logger.info(`Checking revocation status for chain ${testChain} using test UIDs`);
+      const testUids = ['0x1234567890123456789012345678901234567890123456789012345678901234'];
+      await easService.checkRevocationStatus(testChain, testUids);
+    } else {
+      logger.warn('No chains available for revocation checking');
+    }
     
     // Query the database to verify the results
     logger.info('Querying database to verify stored attestations...');

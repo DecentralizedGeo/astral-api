@@ -26,6 +26,7 @@ const envSchema = z.object({
   
   // EAS Schema UID
   EAS_SCHEMA_UID: z.string().optional(),
+  EAS_SCHEMA_RAW_STRING: z.string().optional(),
 });
 
 // Process.env is an object with string keys and possibly undefined values

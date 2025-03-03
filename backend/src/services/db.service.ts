@@ -240,6 +240,30 @@ export class DbService {
   }
 
   /**
+   * Get active (non-revoked) location proofs for a specific chain
+   * 
+   * @param chain The chain to filter by
+   * @param limit Maximum number of proofs to retrieve
+   * @returns Array of active location proofs
+   */
+  async getActiveLocationProofs(chain: string, limit: number = 100): Promise<LocationProof[]> {
+    try {
+      const query = `
+        SELECT * FROM location_proofs
+        WHERE chain = $1 AND revoked = FALSE
+        ORDER BY timestamp DESC
+        LIMIT $2
+      `;
+      
+      const result = await this.pool.query(query, [chain, limit]);
+      return result.rows as LocationProof[];
+    } catch (error) {
+      logger.error('Error getting active location proofs:', error);
+      return [];
+    }
+  }
+
+  /**
    * Close the database connection pool
    */
   async close(): Promise<void> {

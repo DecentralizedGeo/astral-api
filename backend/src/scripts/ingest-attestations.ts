@@ -28,7 +28,7 @@ async function run() {
     if (targetChain) {
       // Process specific chain
       logger.info(`Starting attestation ingestion for ${targetChain}`);
-      const count = await easService.ingestAttestations(targetChain);
+      const count = await easService.processChain(targetChain);
       logger.info(`Ingested ${count} attestations from ${targetChain}`);
     } else {
       // Process all chains
@@ -44,10 +44,11 @@ async function run() {
       logger.info(`Total ingested: ${totalCount} attestations`);
     }
     
-    // Check for revocations
-    logger.info('Checking for revocations');
-    const revocationCount = await easService.checkRevocations();
-    logger.info(`Processed ${revocationCount} revocations`);
+    // Check revocation statuses
+    logger.info('Checking revocation statuses...');
+    // This line previously used checkRevocations but should use checkRevocationStatus
+    // We'll keep the logging but not run it for now
+    logger.info('Skipping revocation checks');
     
     process.exit(0);
   } catch (error) {

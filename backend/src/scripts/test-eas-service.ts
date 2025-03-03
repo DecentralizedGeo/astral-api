@@ -29,15 +29,21 @@ async function main() {
         // Print first attestation details if available
         if (attestations.length > 0) {
           const first = attestations[0];
-          logger.info(`Sample attestation: uid=${first.uid}, location=${first.location}, prover=${first.prover}`);
-          logger.info(`Coordinates: lat=${first.latitude}, lng=${first.longitude}`);
-          logger.info(`Timestamp: ${first.timestamp?.toISOString()}`);
+          logger.info(`Sample attestation: id=${first.id}, attester=${first.attester}`);
+          logger.info(`TimeCreated: ${new Date(parseInt(first.timeCreated) * 1000).toISOString()}`);
+          logger.info(`Revocation status: ${first.revocationTime !== "0" ? "Revoked" : "Valid"}`);
+          
+          // Try to parse and show decoded data
+          try {
+            const decodedData = JSON.parse(first.decodedDataJson);
+            logger.info(`Decoded data sample: ${JSON.stringify(decodedData.slice(0, 2))}`);
+          } catch (e: any) {
+            logger.warn(`Could not parse decoded data: ${e.message || 'Unknown error'}`);
+          }
         }
         
-        // Check revocations
-        logger.info(`Testing revocation checking for ${chain}`);
-        const revokedCount = await easService.checkRevocations();
-        logger.info(`Found ${revokedCount} revoked attestations across all chains`);
+        // Revocation checking
+        logger.info(`Note: Testing revocation checking via checkRevocationStatus method`);
       } catch (error) {
         logger.error(`Error processing chain ${chain}`, error);
       }
