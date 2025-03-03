@@ -2,9 +2,10 @@ import { config, easEndpoints } from '../config';
 import { LocationProof } from '../models/types';
 import { EAS, SchemaEncoder } from '@ethereum-attestation-service/eas-sdk';
 import { JsonRpcProvider } from 'ethers';
-import { DbService } from './db.service';
+import { dbService, DbService } from './db.service';
 import { logger } from '../utils/logger';
 import { ApolloClient, InMemoryCache, gql } from '@apollo/client/core';
+import { supabaseService } from './supabase.service';
 
 // Define the interfaces for EAS GraphQL responses
 interface EASAttestation {
@@ -153,16 +154,38 @@ export class EasService {
     try {
       // For each chain that has a GraphQL client, get the latest timestamp from the database
       for (const chain of Object.keys(this.graphqlClients)) {
-        const result = await this.dbService.getLatestLocationProofTimestamp(chain);
-        if (result) {
-          // Convert to Unix timestamp
-          this.lastProcessedTimestamps[chain] = Math.floor(result.getTime() / 1000);
-        } else {
-          // If no records, start from 7 days ago
-          const oneWeekAgo = new Date();
-          oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-          this.lastProcessedTimestamps[chain] = Math.floor(oneWeekAgo.getTime() / 1000);
+        try {
+          // First try with dbService
+          const result = await this.dbService.getLatestLocationProofTimestamp(chain);
+          if (result) {
+            // Convert to Unix timestamp
+            this.lastProcessedTimestamps[chain] = Math.floor(result.getTime() / 1000);
+          } else {
+            // If no records, start from the beginning of 2023 to get all historical data
+            const beginningOf2023 = new Date('2023-01-01T00:00:00Z');
+            this.lastProcessedTimestamps[chain] = Math.floor(beginningOf2023.getTime() / 1000);
+          }
+        } catch (dbError) {
+          // Fall back to Supabase if available
+          logger.warn(`Failed to get timestamp from DbService for ${chain}, trying Supabase fallback`);
+          if (supabaseService && supabaseService.isAvailable()) {
+            const result = await supabaseService.getLatestLocationProofTimestamp(chain);
+            if (result) {
+              // Convert to Unix timestamp
+              this.lastProcessedTimestamps[chain] = Math.floor(result.getTime() / 1000);
+            } else {
+              // If no records, start from the beginning of 2023 to get all historical data
+              const beginningOf2023 = new Date('2023-01-01T00:00:00Z');
+              this.lastProcessedTimestamps[chain] = Math.floor(beginningOf2023.getTime() / 1000);
+            }
+          } else {
+            // If Supabase is not available, just use a default timestamp
+            logger.warn(`No database connection available for ${chain}, using default timestamp`);
+            const beginningOf2023 = new Date('2023-01-01T00:00:00Z');
+            this.lastProcessedTimestamps[chain] = Math.floor(beginningOf2023.getTime() / 1000);
+          }
         }
+        
         logger.info(`Initialized ${chain} with last timestamp: ${new Date(this.lastProcessedTimestamps[chain] * 1000).toISOString()}`);
       }
     } catch (error) {
@@ -172,9 +195,14 @@ export class EasService {
   }
   
   /**
-   * Fetch attestations from a specific chain using GraphQL
+   * Fetch attestations from a chain starting from a specific timestamp
+   * 
+   * @param chain The chain to fetch attestations from
+   * @param limit The maximum number of attestations to fetch
+   * @param fromTimestamp The timestamp to start fetching from (ISO string)
+   * @returns An array of EAS attestations
    */
-  async fetchAttestations(chain: string): Promise<LocationProof[]> {
+  async fetchAttestations(chain: string, limit: number = 100, fromTimestamp?: string): Promise<EASAttestation[]> {
     if (!this.easClients[chain]) {
       throw new Error(`Chain ${chain} is not supported`);
     }
@@ -186,10 +214,344 @@ export class EasService {
       return [];
     }
     
-    const timestamp = this.lastProcessedTimestamps[chain] || Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 7; // Default to 7 days ago
-    const schemaUID = this.chainConfigs[chain as keyof typeof CHAIN_CONFIG].schemaUID;
-
+    let timestampUnix: number;
+    
+    if (fromTimestamp) {
+      // Convert ISO timestamp to Unix timestamp (seconds)
+      timestampUnix = Math.floor(new Date(fromTimestamp).getTime() / 1000);
+    } else {
+      // Default to beginning of 2023 for all historical data
+      timestampUnix = Math.floor(new Date('2023-01-01T00:00:00Z').getTime() / 1000);
+    }
+    
+    // GraphQL Int is 32-bit signed integer (max: 2147483647), so we need to ensure the timestamp fits
+    const maxSafeInt = 2147483647;
+    // Use the smaller of our timestamp or maxSafeInt to avoid overflow
+    const safeTimestamp = Math.min(timestampUnix, maxSafeInt);
+    
     try {
+      logger.info(`Fetching ${limit} attestations for ${chain} since ${new Date(safeTimestamp * 1000).toISOString()}`);
+      
+      // Create a custom query with the specified limit
+      const query = gql`
+        query GetAttestations($schemaId: String!, $timestamp: Int!, $limit: Int!) {
+          attestations(
+            where: {
+              schemaId: {
+                equals: $schemaId
+              }
+              timeCreated: {
+                gt: $timestamp
+              }
+            }
+            take: $limit
+            orderBy: { timeCreated: asc }
+          ) {
+            id
+            attester
+            recipient
+            revocationTime
+            timeCreated
+            data
+            decodedDataJson
+          }
+        }
+      `;
+      
+      // Query the EAS indexer via GraphQL
+      const response = await client.query({
+        query,
+        variables: {
+          schemaId: this.chainConfigs[chain as keyof typeof CHAIN_CONFIG].schemaUID,
+          timestamp: safeTimestamp,
+          limit
+        }
+      }) as GraphQLQueryResponse;
+      
+      const attestations = response.data.attestations;
+      
+      logger.info(`Fetched ${attestations.length} attestations from ${chain}`);
+      return attestations;
+    } catch (error) {
+      logger.error(`Error fetching attestations from ${chain}`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Convert an EAS attestation to a LocationProof
+   * 
+   * @param attestation The EAS attestation
+   * @param chain The chain the attestation is from
+   * @returns A LocationProof object
+   */
+  async convertAttestationToLocationProof(attestation: EASAttestation, chain: string): Promise<LocationProof> {
+    try {
+      // Decode the attestation data from the JSON string
+      const decodedData = JSON.parse(attestation.decodedDataJson);
+      
+      // Helper function to find a value in the decoded data by name
+      const findValue = (name: string) => {
+        const item = decodedData.find((item: DecodedDataItem) => item.name === name);
+        return item ? item.value.value : null;
+      };
+      
+      // Extract values from the decoded data
+      const eventTimestamp = findValue('eventTimestamp');
+      const srs = findValue('srs') || 'WGS84'; // Default to WGS84 if not specified
+      const locationType = findValue('locationType') || 'point';
+      const location = findValue('location') || '';
+      const recipeTypes = findValue('recipeType') || [];
+      const recipePayloads = findValue('recipePayload') || [];
+      const mediaTypes = findValue('mediaType') || [];
+      const mediaData = findValue('mediaData') || [];
+      const memo = findValue('memo') || '';
+      
+      // Parse coordinates from the location string
+      let latitude: number | undefined = undefined;
+      let longitude: number | undefined = undefined;
+      
+      // Try to parse GeoJSON format first
+      if (location) {
+        try {
+          // Try to parse as JSON first
+          const parsedLocation = JSON.parse(location);
+          
+          // Helper function to extract first valid coordinate pair from any GeoJSON geometry
+          const extractFirstCoordinate = (geom: any): [number, number] | null => {
+            if (!geom || !geom.type || !geom.coordinates) return null;
+            
+            switch (geom.type) {
+              case 'Point':
+                // Point: [longitude, latitude]
+                if (Array.isArray(geom.coordinates) && geom.coordinates.length >= 2) {
+                  return [geom.coordinates[0], geom.coordinates[1]];
+                }
+                break;
+                
+              case 'LineString':
+                // LineString: [[lon1, lat1], [lon2, lat2], ...]
+                if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
+                    Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length >= 2) {
+                  return [geom.coordinates[0][0], geom.coordinates[0][1]];
+                }
+                break;
+                
+              case 'Polygon':
+                // Polygon: [[[lon1, lat1], [lon2, lat2], ...], [...]]
+                if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
+                    Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length > 0 &&
+                    Array.isArray(geom.coordinates[0][0]) && geom.coordinates[0][0].length >= 2) {
+                  return [geom.coordinates[0][0][0], geom.coordinates[0][0][1]];
+                }
+                break;
+                
+              case 'MultiPoint':
+                // MultiPoint: [[lon1, lat1], [lon2, lat2], ...]
+                if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
+                    Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length >= 2) {
+                  return [geom.coordinates[0][0], geom.coordinates[0][1]];
+                }
+                break;
+                
+              case 'MultiLineString':
+                // MultiLineString: [[[lon1, lat1], [lon2, lat2], ...], [...]]
+                if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
+                    Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length > 0 &&
+                    Array.isArray(geom.coordinates[0][0]) && geom.coordinates[0][0].length >= 2) {
+                  return [geom.coordinates[0][0][0], geom.coordinates[0][0][1]];
+                }
+                break;
+                
+              case 'MultiPolygon':
+                // MultiPolygon: [[[[lon1, lat1], [lon2, lat2], ...], [...]], [...]]
+                if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
+                    Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length > 0 &&
+                    Array.isArray(geom.coordinates[0][0]) && geom.coordinates[0][0].length > 0 &&
+                    Array.isArray(geom.coordinates[0][0][0]) && geom.coordinates[0][0][0].length >= 2) {
+                  return [geom.coordinates[0][0][0][0], geom.coordinates[0][0][0][1]];
+                }
+                break;
+            }
+            
+            return null;
+          };
+          
+          // Determine the type of GeoJSON
+          let coords: [number, number] | null = null;
+          
+          // Direct geometry object
+          if (parsedLocation.type && parsedLocation.coordinates) {
+            coords = extractFirstCoordinate(parsedLocation);
+            if (coords) {
+              logger.info(`Parsed GeoJSON ${parsedLocation.type}: [${coords[0]}, ${coords[1]}]`);
+            }
+          } 
+          // Feature
+          else if (parsedLocation.type === 'Feature' && parsedLocation.geometry) {
+            coords = extractFirstCoordinate(parsedLocation.geometry);
+            if (coords) {
+              logger.info(`Parsed GeoJSON Feature with ${parsedLocation.geometry.type}: [${coords[0]}, ${coords[1]}]`);
+            }
+          }
+          // FeatureCollection
+          else if (parsedLocation.type === 'FeatureCollection' && 
+                  Array.isArray(parsedLocation.features) && 
+                  parsedLocation.features.length > 0 &&
+                  parsedLocation.features[0].geometry) {
+            coords = extractFirstCoordinate(parsedLocation.features[0].geometry);
+            if (coords) {
+              logger.info(`Parsed GeoJSON FeatureCollection (first feature is ${parsedLocation.features[0].geometry.type}): [${coords[0]}, ${coords[1]}]`);
+            }
+          }
+          
+          // If coordinates were found, validate and assign them
+          if (coords) {
+            // GeoJSON coordinates are in [longitude, latitude] order
+            longitude = coords[0];
+            latitude = coords[1];
+            
+            // Validate coordinate ranges
+            if (!latitude || !longitude || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+              logger.warn(`Invalid GeoJSON coordinates: [${longitude}, ${latitude}]`);
+              latitude = undefined;
+              longitude = undefined;
+            }
+          }
+        } catch (e) {
+          // Not JSON or invalid JSON - try other parsing methods
+          // No need to log here, will attempt other formats
+        }
+      }
+      
+      // If GeoJSON parsing didn't work, try simple coordinate format
+      if (latitude === undefined || longitude === undefined) {
+        // Try to parse simple coordinate format - could be "lat,lng" or "lng,lat"
+        if (location && location.includes(',')) {
+          const parts = location.split(',');
+          if (parts.length === 2) {
+            try {
+              // Parse both values
+              const val1 = parseFloat(parts[0].trim());
+              const val2 = parseFloat(parts[1].trim());
+              
+              // Ensure values are valid numbers
+              if (isNaN(val1) || isNaN(val2)) {
+                latitude = undefined;
+                longitude = undefined;
+              } else {
+                // Determine which is latitude and which is longitude based on value ranges
+                // Latitude: -90 to 90, Longitude: -180 to 180
+                if (Math.abs(val1) <= 90 && Math.abs(val2) <= 180) {
+                  // Standard "lat,lng" format
+                  latitude = val1;
+                  longitude = val2;
+                } else if (Math.abs(val2) <= 90 && Math.abs(val1) <= 180) {
+                  // Reversed "lng,lat" format
+                  latitude = val2;
+                  longitude = val1;
+                } else {
+                  // Values out of range, might not be coordinates
+                  logger.warn(`Coordinate values out of range in '${location}'`);
+                  latitude = undefined;
+                  longitude = undefined;
+                }
+              }
+            } catch (e) {
+              // Keep as undefined if parsing fails
+              logger.warn(`Failed to parse coordinates from '${location}'`, e);
+            }
+          }
+        }
+      }
+      
+      // Parse timestamps - handle potential parsing errors
+      let timestamp: Date;
+      let event_timestamp: Date;
+      
+      try {
+        const timeCreated = parseInt(attestation.timeCreated) * 1000; // Convert to milliseconds
+        timestamp = new Date(timeCreated);
+        
+        // If timestamp is invalid, use current time
+        if (isNaN(timestamp.getTime())) {
+          timestamp = new Date();
+          logger.warn(`Invalid timestamp in attestation ${attestation.id}, using current time`);
+        }
+        
+        // Parse event timestamp
+        if (eventTimestamp) {
+          const eventTime = parseInt(eventTimestamp) * 1000;
+          event_timestamp = new Date(eventTime);
+          
+          // If event timestamp is invalid, use attestation time
+          if (isNaN(event_timestamp.getTime())) {
+            event_timestamp = timestamp;
+            logger.warn(`Invalid event timestamp in attestation ${attestation.id}, using attestation time`);
+          }
+        } else {
+          event_timestamp = timestamp;
+        }
+      } catch (error) {
+        logger.warn(`Error parsing timestamps for attestation ${attestation.id}, using current time`, error);
+        timestamp = new Date();
+        event_timestamp = new Date();
+      }
+      
+      // Check if attestation is revoked
+      const revoked = attestation.revocationTime !== "0";
+      
+      // Create the location proof
+      const proof: LocationProof = {
+        uid: attestation.id,
+        chain,
+        prover: attestation.attester,
+        subject: attestation.recipient || attestation.attester,
+        timestamp,
+        event_timestamp,
+        srs,
+        location_type: locationType,
+        location,
+        longitude,
+        latitude,
+        recipe_types: recipeTypes,
+        recipe_payloads: recipePayloads,
+        media_types: mediaTypes,
+        media_data: mediaData,
+        memo,
+        revoked,
+        created_at: new Date(),
+        updated_at: new Date()
+      };
+      
+      return proof;
+    } catch (error) {
+      logger.error(`Failed to convert attestation ${attestation.id} to location proof`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Fetch recent attestations from a specific chain
+   * 
+   * @param chain The chain to fetch attestations from
+   * @returns An array of EAS attestations
+   */
+  async fetchRecentAttestations(chain: string): Promise<EASAttestation[]> {
+    // Get the last week of attestations
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    return this.fetchAttestations(chain, 100, oneWeekAgo.toISOString());
+  }
+  
+  /**
+   * Process attestations for a single chain
+   */
+  async processChain(chain: string): Promise<number> {
+    try {
+      const timestamp = this.lastProcessedTimestamps[chain] || Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 7; // Default to 7 days ago
+      const schemaUID = this.chainConfigs[chain as keyof typeof CHAIN_CONFIG].schemaUID;
+
       logger.info(`Fetching attestations for ${chain} since ${new Date(timestamp * 1000).toISOString()}`);
       
       // GraphQL Int is 32-bit signed integer (max: 2147483647), so we need to ensure the timestamp fits
@@ -198,331 +560,85 @@ export class EasService {
       const safeTimestamp = Math.min(timestamp, maxSafeInt);
       
       // Query the EAS indexer via GraphQL
-      const response = await client.query({
-        query: this.ATTESTATIONS_QUERY,
-        variables: {
-          schemaId: schemaUID,
-          timestamp: safeTimestamp
-        }
-      }) as GraphQLQueryResponse;
-      
-      const attestations = response.data.attestations;
+      const attestations = await this.fetchAttestations(chain, 100, new Date(safeTimestamp * 1000).toISOString());
       
       if (attestations.length === 0) {
         logger.info(`No attestations found for chain ${chain}`);
-        return [];
+        return 0;
       }
       
-      logger.info(`Fetched ${attestations.length} attestations from ${chain}`);
+      logger.info(`Processing ${attestations.length} attestations from ${chain}`);
       
-      // Parse attestations into LocationProofs
-      const locationProofs: LocationProof[] = [];
+      let processedCount = 0;
       
+      // Process each attestation
       for (const attestation of attestations) {
         try {
-          // Decode the attestation data from the JSON string
-          const decodedData = JSON.parse(attestation.decodedDataJson);
-          
-          // Helper function to find a value in the decoded data by name
-          const findValue = (name: string) => {
-            const item = decodedData.find((item: DecodedDataItem) => item.name === name);
-            return item ? item.value.value : null;
-          };
-          
-          // Extract values from the decoded data
-          const eventTimestamp = findValue('eventTimestamp');
-          const srs = findValue('srs') || 'WGS84'; // Default to WGS84 if not specified
-          const locationType = findValue('locationType') || 'point';
-          const location = findValue('location') || '';
-          const recipeTypes = findValue('recipeType') || [];
-          const recipePayloads = findValue('recipePayload') || [];
-          const mediaTypes = findValue('mediaType') || [];
-          const mediaData = findValue('mediaData') || [];
-          const memo = findValue('memo') || '';
-          
-          // Parse coordinates from the location string
-          let latitude: number | undefined = undefined;
-          let longitude: number | undefined = undefined;
-          
-          // Try to parse GeoJSON format first
-          if (location) {
-            try {
-              // Try to parse as JSON first
-              const parsedLocation = JSON.parse(location);
-              
-              // Helper function to extract first valid coordinate pair from any GeoJSON geometry
-              const extractFirstCoordinate = (geom: any): [number, number] | null => {
-                if (!geom || !geom.type || !geom.coordinates) return null;
-                
-                switch (geom.type) {
-                  case 'Point':
-                    // Point: [longitude, latitude]
-                    if (Array.isArray(geom.coordinates) && geom.coordinates.length >= 2) {
-                      return [geom.coordinates[0], geom.coordinates[1]];
-                    }
-                    break;
-                    
-                  case 'LineString':
-                    // LineString: [[lon1, lat1], [lon2, lat2], ...]
-                    if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
-                        Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length >= 2) {
-                      return [geom.coordinates[0][0], geom.coordinates[0][1]];
-                    }
-                    break;
-                    
-                  case 'Polygon':
-                    // Polygon: [[[lon1, lat1], [lon2, lat2], ...], [...]]
-                    if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
-                        Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length > 0 &&
-                        Array.isArray(geom.coordinates[0][0]) && geom.coordinates[0][0].length >= 2) {
-                      return [geom.coordinates[0][0][0], geom.coordinates[0][0][1]];
-                    }
-                    break;
-                    
-                  case 'MultiPoint':
-                    // MultiPoint: [[lon1, lat1], [lon2, lat2], ...]
-                    if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
-                        Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length >= 2) {
-                      return [geom.coordinates[0][0], geom.coordinates[0][1]];
-                    }
-                    break;
-                    
-                  case 'MultiLineString':
-                    // MultiLineString: [[[lon1, lat1], [lon2, lat2], ...], [...]]
-                    if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
-                        Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length > 0 &&
-                        Array.isArray(geom.coordinates[0][0]) && geom.coordinates[0][0].length >= 2) {
-                      return [geom.coordinates[0][0][0], geom.coordinates[0][0][1]];
-                    }
-                    break;
-                    
-                  case 'MultiPolygon':
-                    // MultiPolygon: [[[[lon1, lat1], [lon2, lat2], ...], [...]], [...]]
-                    if (Array.isArray(geom.coordinates) && geom.coordinates.length > 0 && 
-                        Array.isArray(geom.coordinates[0]) && geom.coordinates[0].length > 0 &&
-                        Array.isArray(geom.coordinates[0][0]) && geom.coordinates[0][0].length > 0 &&
-                        Array.isArray(geom.coordinates[0][0][0]) && geom.coordinates[0][0][0].length >= 2) {
-                      return [geom.coordinates[0][0][0][0], geom.coordinates[0][0][0][1]];
-                    }
-                    break;
-                }
-                
-                return null;
-              };
-              
-              // Determine the type of GeoJSON
-              let coords: [number, number] | null = null;
-              
-              // Direct geometry object
-              if (parsedLocation.type && parsedLocation.coordinates) {
-                coords = extractFirstCoordinate(parsedLocation);
-                if (coords) {
-                  logger.info(`Parsed GeoJSON ${parsedLocation.type}: [${coords[0]}, ${coords[1]}]`);
-                }
-              } 
-              // Feature
-              else if (parsedLocation.type === 'Feature' && parsedLocation.geometry) {
-                coords = extractFirstCoordinate(parsedLocation.geometry);
-                if (coords) {
-                  logger.info(`Parsed GeoJSON Feature with ${parsedLocation.geometry.type}: [${coords[0]}, ${coords[1]}]`);
-                }
-              }
-              // FeatureCollection
-              else if (parsedLocation.type === 'FeatureCollection' && 
-                      Array.isArray(parsedLocation.features) && 
-                      parsedLocation.features.length > 0 &&
-                      parsedLocation.features[0].geometry) {
-                coords = extractFirstCoordinate(parsedLocation.features[0].geometry);
-                if (coords) {
-                  logger.info(`Parsed GeoJSON FeatureCollection (first feature is ${parsedLocation.features[0].geometry.type}): [${coords[0]}, ${coords[1]}]`);
-                }
-              }
-              
-              // If coordinates were found, validate and assign them
-              if (coords) {
-                // GeoJSON coordinates are in [longitude, latitude] order
-                longitude = coords[0];
-                latitude = coords[1];
-                
-                // Validate coordinate ranges
-                if (!latitude || !longitude || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
-                  logger.warn(`Invalid GeoJSON coordinates: [${longitude}, ${latitude}]`);
-                  latitude = undefined;
-                  longitude = undefined;
-                }
-              }
-            } catch (e) {
-              // Not JSON or invalid JSON - try other parsing methods
-              // No need to log here, will attempt other formats
-            }
-          }
-          
-          // If GeoJSON parsing didn't work, try simple coordinate format
-          if (latitude === undefined || longitude === undefined) {
-            // Try to parse simple coordinate format - could be "lat,lng" or "lng,lat"
-            if (location && location.includes(',')) {
-              const parts = location.split(',');
-              if (parts.length === 2) {
-                try {
-                  // Parse both values
-                  const val1 = parseFloat(parts[0].trim());
-                  const val2 = parseFloat(parts[1].trim());
-                  
-                  // Ensure values are valid numbers
-                  if (isNaN(val1) || isNaN(val2)) {
-                    latitude = undefined;
-                    longitude = undefined;
-                  } else {
-                    // Determine which is latitude and which is longitude based on value ranges
-                    // Latitude: -90 to 90, Longitude: -180 to 180
-                    if (Math.abs(val1) <= 90 && Math.abs(val2) <= 180) {
-                      // Standard "lat,lng" format
-                      latitude = val1;
-                      longitude = val2;
-                    } else if (Math.abs(val2) <= 90 && Math.abs(val1) <= 180) {
-                      // Reversed "lng,lat" format
-                      latitude = val2;
-                      longitude = val1;
-                    } else {
-                      // Values out of range, might not be coordinates
-                      logger.warn(`Coordinate values out of range in '${location}'`);
-                      latitude = undefined;
-                      longitude = undefined;
-                    }
-                  }
-                } catch (e) {
-                  // Keep as undefined if parsing fails
-                  logger.warn(`Failed to parse coordinates from '${location}'`, e);
-                }
-              }
-            }
-          }
-          
-          // Parse timestamps - handle potential parsing errors
-          let timestamp: Date;
-          let event_timestamp: Date;
+          // Check if we already have this attestation
+          let exists = false;
           
           try {
-            const timeCreated = parseInt(attestation.timeCreated) * 1000; // Convert to milliseconds
-            timestamp = new Date(timeCreated);
-            
-            // If timestamp is invalid, use current time
-            if (isNaN(timestamp.getTime())) {
-              timestamp = new Date();
-              logger.warn(`Invalid timestamp in attestation ${attestation.id}, using current time`);
-            }
-            
-            // Parse event timestamp
-            if (eventTimestamp) {
-              const eventTime = parseInt(eventTimestamp) * 1000;
-              event_timestamp = new Date(eventTime);
-              
-              // If event timestamp is invalid, use attestation time
-              if (isNaN(event_timestamp.getTime())) {
-                event_timestamp = timestamp;
-                logger.warn(`Invalid event timestamp in attestation ${attestation.id}, using attestation time`);
-              }
-            } else {
-              event_timestamp = timestamp;
-            }
+            exists = await this.dbService.locationProofExists(attestation.id);
           } catch (error) {
-            logger.warn(`Error parsing timestamps for attestation ${attestation.id}, using current time`, error);
-            timestamp = new Date();
-            event_timestamp = new Date();
+            // Fall back to Supabase if DbService fails
+            logger.warn(`DbService.locationProofExists failed, falling back to Supabase: ${(error as Error).message}`);
+            if (supabaseService && supabaseService.isAvailable()) {
+              exists = await supabaseService.locationProofExists(attestation.id);
+            } else {
+              throw error; // Re-throw if no fallback available
+            }
           }
           
-          // Check if attestation is revoked
-          const revoked = attestation.revocationTime !== "0";
-          
-          // Create the location proof
-          const proof: LocationProof = {
-            uid: attestation.id,
-            chain,
-            prover: attestation.attester,
-            subject: attestation.recipient || attestation.attester,
-            timestamp,
-            event_timestamp,
-            srs,
-            location_type: locationType,
-            location,
-            longitude,
-            latitude,
-            recipe_types: recipeTypes,
-            recipe_payloads: recipePayloads,
-            media_types: mediaTypes,
-            media_data: mediaData,
-            memo,
-            revoked,
-            created_at: new Date(),
-            updated_at: new Date()
-          };
-          
-          locationProofs.push(proof);
+          if (!exists) {
+            // Convert the attestation to a location proof
+            const locationProof = await this.convertAttestationToLocationProof(attestation, chain);
+            
+            // Store in database (try DbService first, fall back to Supabase)
+            try {
+              await this.dbService.createLocationProof(locationProof);
+            } catch (error) {
+              // Fall back to Supabase if DbService fails
+              logger.warn(`DbService.createLocationProof failed, falling back to Supabase: ${(error as Error).message}`);
+              if (supabaseService && supabaseService.isAvailable()) {
+                await supabaseService.createLocationProof(locationProof);
+              } else {
+                throw error; // Re-throw if no fallback available
+              }
+            }
+            
+            processedCount++;
+          } else {
+            logger.debug(`Attestation ${attestation.id} already exists in database`);
+          }
         } catch (error) {
-          logger.error(`Failed to parse attestation ${attestation.id}`, error);
+          logger.error(`Error processing attestation ${attestation.id}`, error);
+          // Continue with next attestation
         }
       }
       
       // Update last processed timestamp if we got any attestations
-      if (locationProofs.length > 0) {
-        const timestamps = locationProofs
-          .map(p => Math.floor(p.timestamp!.getTime() / 1000));
-          
-        if (timestamps.length > 0) {
-          const lastTimestamp = Math.max(...timestamps);
-          this.lastProcessedTimestamps[chain] = lastTimestamp;
-          logger.info(`Updated last timestamp for ${chain} to ${new Date(lastTimestamp * 1000).toISOString()}`);
-        }
+      if (attestations.length > 0) {
+        const lastAttestationTime = Math.max(...attestations.map(a => parseInt(a.timeCreated)));
+        this.lastProcessedTimestamps[chain] = lastAttestationTime;
+        logger.info(`Updated last timestamp for ${chain} to ${new Date(lastAttestationTime * 1000).toISOString()}`);
       }
       
-      return locationProofs;
+      return processedCount;
     } catch (error) {
-      logger.error(`Error fetching attestations from ${chain}`, error);
+      logger.error(`Error processing chain ${chain}`, error);
       throw error;
     }
   }
   
   /**
-   * Helper to find a value in decoded data by name
-   */
-  private findValue(decodedData: DecodedDataItem[], name: string): string | number | boolean | string[] | number[] | boolean[] | null {
-    const item = decodedData.find(item => item.name === name);
-    return item ? item.value.value : null;
-  }
-  
-  /**
-   * Ingest attestations from a specific chain and store in database
-   */
-  async ingestAttestations(chain: string): Promise<number> {
-    try {
-      const locationProofs = await this.fetchAttestations(chain);
-      
-      if (locationProofs.length === 0) {
-        return 0;
-      }
-      
-      // Store attestations in database
-      for (const proof of locationProofs) {
-        await this.dbService.createLocationProof(proof);
-      }
-      
-      logger.info(`Successfully ingested ${locationProofs.length} attestations from ${chain}`);
-      return locationProofs.length;
-    } catch (error) {
-      logger.error(`Error ingesting attestations from ${chain}`, error);
-      throw error;
-    }
-  }
-  
-  /**
-   * Process attestations from all supported chains
+   * Process all chains
    */
   async processAllChains(): Promise<Record<string, number>> {
     const results: Record<string, number> = {};
     
-    for (const chain of Object.keys(this.easClients)) {
+    for (const chain of Object.keys(this.graphqlClients)) {
       try {
-        const count = await this.ingestAttestations(chain);
+        const count = await this.processChain(chain);
         results[chain] = count;
       } catch (error) {
         logger.error(`Failed to process chain ${chain}`, error);
@@ -533,86 +649,77 @@ export class EasService {
     return results;
   }
   
-  // GraphQL query to fetch revoked attestations with correct syntax
-  private REVOCATIONS_QUERY = gql`
-    query GetRevokedAttestations($schemaId: String!) {
-      attestations(
-        where: {
-          schemaId: {
-            equals: $schemaId
-          }
-          revocationTime: {
-            not: {
-              equals: 0
-            }
-          }
-        }
-        take: 100
-      ) {
-        id
-        revocationTime
-      }
-    }
-  `;
+  /**
+   * Helper to find a value in decoded data by name
+   */
+  private findValue(decodedData: DecodedDataItem[], name: string): string | number | boolean | string[] | number[] | boolean[] | null {
+    const item = decodedData.find(item => item.name === name);
+    return item ? item.value.value : null;
+  }
 
   /**
-   * Check for and process revocations
+   * Check revocation status for a list of attestations
+   * 
+   * @param chain The chain to check revocation on
+   * @param uids List of attestation UIDs to check
+   * @returns Array of UIDs that have been revoked
    */
-  async checkRevocations(): Promise<number> {
-    let totalRevoked = 0;
-    
-    for (const chain of Object.keys(this.graphqlClients)) {
-      try {
-        const client = this.graphqlClients[chain];
-        if (!client) {
-          logger.warn(`No GraphQL client available for ${chain}, cannot check revocations`);
-          continue;
-        }
-        
-        const chainKey = chain as keyof typeof CHAIN_CONFIG;
-        const schemaUID = this.chainConfigs[chainKey].schemaUID;
-        
-        logger.info(`Checking revocations for ${chain} using schema ${schemaUID}`);
-        
-        // Query the EAS indexer for revoked attestations
-        const response = await client.query({
-          query: this.REVOCATIONS_QUERY,
-          variables: {
-            schemaId: schemaUID
-          }
-        }) as GraphQLQueryResponse;
-        
-        const revocations = response.data.attestations;
-        if (revocations.length === 0) {
-          logger.info(`No revocations found for chain ${chain}`);
-          continue;
-        }
-        
-        // Extract UIDs of revoked attestations
-        const revokedUids = revocations.map((rev: EASAttestation) => rev.id);
-        
-        // First, check which attestations we already have in our database
-        const existingUids: string[] = [];
-        for (const uid of revokedUids) {
-          const exists = await this.dbService.locationProofExists(uid);
-          if (exists) {
-            existingUids.push(uid);
-          }
-        }
-        
-        if (existingUids.length > 0) {
-          const count = await this.dbService.batchUpdateRevocations(existingUids, true);
-          totalRevoked += count;
-          
-          logger.info(`Processed ${count} revocations for chain ${chain}`);
-        } else {
-          logger.info(`No matching revocations found for chain ${chain} in our database`);
-        }
-      } catch (error) {
-        logger.error(`Error checking revocations for chain ${chain}`, error);
-      }
+  async checkRevocationStatus(chain: string, uids: string[]): Promise<string[]> {
+    if (!this.easClients[chain]) {
+      throw new Error(`Chain ${chain} is not supported`);
     }
-    
-    return totalRevoked;
+
+    // Check if we have a GraphQL client for this chain
+    const client = this.graphqlClients[chain];
+    if (!client) {
+      logger.warn(`No GraphQL client available for ${chain}, cannot check revocation status`);
+      return [];
+    }
+
+    if (uids.length === 0) {
+      return [];
+    }
+
+    try {
+      // Create a GraphQL query to get revocation status for UIDs
+      const query = gql`
+        query CheckRevocation($uids: [String!]!) {
+          attestations(where: { id: { in: $uids } }) {
+            id
+            revocationTime
+          }
+        }
+      `;
+
+      // Execute the query
+      const response = await client.query({
+        query,
+        variables: {
+          uids
+        },
+        fetchPolicy: 'network-only' // Skip cache to get fresh data
+      });
+
+      // Extract revoked attestations (revocationTime != "0")
+      const revokedUids = response.data.attestations
+        .filter((att: { id: string; revocationTime: string }) => att.revocationTime !== "0")
+        .map((att: { id: string }) => att.id);
+
+      logger.info(`Found ${revokedUids.length} revoked attestations out of ${uids.length} checked on ${chain}`);
+      return revokedUids;
+    } catch (error) {
+      logger.error(`Error checking revocation status on chain ${chain}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get GraphQL clients for all chains
+   */
+  getGraphQLClients(): Record<string, ApolloClient<unknown>> {
+    return this.graphqlClients;
   }
 }
+
+// Create a singleton instance to export
+export const easService = new EasService(dbService);
