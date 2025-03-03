@@ -20,7 +20,7 @@ Below is a plan broken down into **small tasks** that an AI agent can execute **
 
 ---
 
-## Phase 2: Database Schema & Supabase Integration ⬜
+## Phase 2: Database Schema & Supabase Integration ✅
 
 1. **Log into Supabase**: Create a new project if not already done.
 2. **Obtain Credentials**: Copy Supabase connection string.

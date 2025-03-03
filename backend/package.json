@@ -10,10 +10,13 @@
     "lint": "eslint . --ext .ts",
     "typecheck": "tsc --noEmit",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "db:setup": "ts-node src/scripts/setup-db.ts",
+    "db:migrate": "ts-node src/migrations/run-migrations.ts"
   },
   "dependencies": {
     "@apollo/server": "^4.9.5",
+    "@supabase/supabase-js": "^2.49.1",
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
     "graphql": "^16.8.1",
