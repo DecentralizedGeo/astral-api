@@ -11,6 +11,26 @@ A unified gateway for accessing location proof attestations (EAS attestations) a
 - Real-time Attestation Ingestion: Automated background worker that ingests new location proof attestations
 - Multi-Chain Support: Currently supports Arbitrum, Celo, Sepolia, and Base networks
 
+## Documentation
+
+For detailed documentation on how to use and integrate with the API:
+
+- [Getting Started](./docs/getting-started.md)
+- [API Reference](./docs/api-reference.md)
+- [Data Model](./docs/data-model.md)
+- [Spatial Queries](./docs/spatial-queries.md)
+- [OGC API](./docs/ogc-api.md)
+- [GraphQL API](./docs/graphql-api.md)
+- [Troubleshooting](./docs/troubleshooting.md)
+
+## Production API
+
+The API is deployed and available at:
+
+```
+https://api.astral.global
+```
+
 ## Getting Started
 
 ### Prerequisites
@@ -85,6 +105,13 @@ The system includes a worker (`eas-worker.ts`) that periodically polls EAS index
 
 Location proof data is stored in the PostgreSQL database and can be queried via REST or GraphQL APIs.
 
+## Deployment
+
+For detailed instructions on deploying the API to Vercel:
+
+- [Vercel Deployment Guide](./backend/VERCEL-DEPLOY.md)
+- [Deployment Checklist](./backend/DEPLOYMENT-CHECKLIST.md)
+
 ## License
 
-TBD
+MIT
