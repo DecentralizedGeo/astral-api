@@ -15,10 +15,15 @@ const port = parseInt(process.env.PORT || '3001'); // Use different port to avoi
 
 // Initialize Supabase client if credentials are provided
 try {
-  supabaseService.initialize();
-  logger.info('Supabase client initialized successfully');
+  const client = supabaseService.initialize();
+  if (client) {
+    logger.info('Supabase client initialized successfully');
+  } else {
+    logger.warn('Supabase client could not be initialized due to missing credentials');
+  }
 } catch (error) {
-  logger.warn('Supabase client could not be initialized, continuing without Supabase integration');
+  logger.error('Supabase client initialization error:', error);
+  logger.warn('Continuing without Supabase integration - OGC API endpoints may not work correctly');
 }
 
 // Middleware
@@ -43,7 +48,8 @@ app.get('/', (req, res) => {
       locationProofs: '/api/v0/location-proofs',
       locationProofsStats: '/api/v0/location-proofs/stats',
       syncStatus: '/api/sync/status',
-      triggerSync: '/api/sync'
+      triggerSync: '/api/sync',
+      ogcApi: '/api/ogc'
     }
   });
 });
