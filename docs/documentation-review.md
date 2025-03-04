@@ -1,5 +1,7 @@
 # Documentation Review for Astral API
 
+*This is an internal review document to guide documentation improvements.*
+
 ## Overview
 
 This document provides a comprehensive review of the Astral API documentation as part of Phase 9. The documentation is generally thorough and well-structured, covering most aspects of the API. Below are findings and recommendations to ensure the documentation is accurate, comprehensive, and production-ready.
