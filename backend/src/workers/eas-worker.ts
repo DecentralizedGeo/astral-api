@@ -64,7 +64,12 @@ export class EasWorker {
     maxRetries: number = 3,
     retryDelay: number = 5000
   ) {
+    // Initialize with Supabase focus
     this.dbService = new DbService();
+    
+    // Initialize Supabase client first to ensure it's available
+    supabaseService.initialize();
+    
     this.easService = new EasService(this.dbService);
     this.intervalMs = intervalMs;
     this.revocationIntervalMs = revocationIntervalMs;

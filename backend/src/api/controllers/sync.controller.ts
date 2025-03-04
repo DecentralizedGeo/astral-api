@@ -3,6 +3,7 @@ import { easService } from '../../services/eas.service';
 import { logger } from '../../utils/logger';
 import { easEndpoints } from '../../config';
 import { EasWorker } from '../../workers/eas-worker';
+import { supabaseService } from '../../services/supabase.service';
 
 // Mock EAS worker for testing
 class MockEasWorker {
@@ -103,8 +104,17 @@ let workerInitialized = false;
 async function initializeWorker(): Promise<void> {
   if (!workerInitialized) {
     try {
+      // First ensure Supabase service is available
+      const supabaseClient = supabaseService.initialize();
+      if (!supabaseClient) {
+        throw new Error('Failed to initialize Supabase client. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.');
+      }
+      
+      // Initialize worker
       await worker.initialize();
       workerInitialized = true;
+      
+      logger.info('Worker initialized successfully with Supabase client');
       
       // Start the worker in the background if not already running
       if (!worker.isWorkerRunning() && worker.isStopped()) {

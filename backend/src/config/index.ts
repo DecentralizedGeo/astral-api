@@ -6,17 +6,17 @@ dotenv.config();
 
 // Define a schema for environment variables
 const envSchema = z.object({
-  // Database
-  DATABASE_URL: z.string(),
+  // Database (making it optional since we're using Supabase exclusively)
+  DATABASE_URL: z.string().optional(),
   
   // API Configuration
   PORT: z.string().default('3000'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   
-  // Optional Supabase config
-  SUPABASE_URL: z.string().optional(),
+  // Required Supabase config (since we're using Supabase exclusively)
+  SUPABASE_URL: z.string(),
   SUPABASE_KEY: z.string().optional(),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string(),
   
   // EAS Endpoints
   EAS_ENDPOINT_ARBITRUM: z.string().optional(),
