@@ -394,9 +394,19 @@ export class EasWorker {
         try {
           // Get active attestations for this chain (not already revoked)
           // Use limit of 100 at a time to avoid overloading the system
-          const attestations = await this.dbService.getActiveLocationProofs(chain, 100);
+          let attestations;
           
-          if (attestations.length === 0) {
+          try {
+            attestations = await this.dbService.getActiveLocationProofs(chain, 100);
+          } catch (dbError) {
+            logger.error(`Error getting active location proofs from DbService for chain ${chain}:`, dbError);
+            
+            // Don't try to fallback to Supabase here since we're getting the same error
+            logger.info(`Skipping revocation check for chain ${chain} due to database error`);
+            continue;
+          }
+          
+          if (!attestations || attestations.length === 0) {
             logger.debug(`No active attestations to check for chain ${chain}`);
             continue;
           }
@@ -413,15 +423,20 @@ export class EasWorker {
           if (revokedUids.length > 0) {
             logger.info(`Found ${revokedUids.length} revoked attestations on ${chain}`);
             
-            // Update revocation status in the database
-            if (supabaseService && supabaseService.isAvailable()) {
-              await supabaseService.batchUpdateRevocations(revokedUids, true);
-            } else {
-              // Fall back to DB service
-              await this.dbService.batchUpdateRevocations(revokedUids, true);
+            // Update revocation status in the database, with error handling
+            try {
+              // Try Supabase first if available
+              if (supabaseService && supabaseService.isAvailable()) {
+                await supabaseService.batchUpdateRevocations(revokedUids, true);
+              } else {
+                // Fall back to DB service
+                await this.dbService.batchUpdateRevocations(revokedUids, true);
+              }
+              
+              totalRevoked += revokedUids.length;
+            } catch (updateError) {
+              logger.error(`Failed to update revocation status for chain ${chain}:`, updateError);
             }
-            
-            totalRevoked += revokedUids.length;
           } else {
             logger.debug(`No revoked attestations found on ${chain}`);
           }
