@@ -103,14 +103,27 @@ let workerInitialized = false;
 // Function to initialize the worker if not already initialized
 async function initializeWorker(): Promise<void> {
   if (!workerInitialized) {
+    logger.info('Initializing worker with environment:',
+      {
+        nodeEnv: process.env.NODE_ENV,
+        supabaseUrl: process.env.SUPABASE_URL ? 'Set' : 'Not set',
+        supabaseKey: process.env.SUPABASE_KEY ? 'Set' : 'Not set',
+        supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'Set' : 'Not set'
+      }
+    );
+    
     try {
       // First ensure Supabase service is available
+      logger.info('Initializing Supabase client');
       const supabaseClient = supabaseService.initialize();
       if (!supabaseClient) {
+        logger.error('Failed to initialize Supabase client - null client returned');
         throw new Error('Failed to initialize Supabase client. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.');
       }
       
-      // Initialize worker
+      logger.info('Supabase client initialized successfully, proceeding to worker initialization');
+      
+      // Initialize worker with specific retry settings for production
       await worker.initialize();
       workerInitialized = true;
       
@@ -118,9 +131,12 @@ async function initializeWorker(): Promise<void> {
       
       // Start the worker in the background if not already running
       if (!worker.isWorkerRunning() && worker.isStopped()) {
+        logger.info('Starting background worker');
         worker.start().catch(error => {
           logger.error('Failed to start background worker:', error);
         });
+      } else {
+        logger.info('Background worker already running, not starting again');
       }
     } catch (error) {
       // Show detailed error for debugging purposes
@@ -131,9 +147,19 @@ async function initializeWorker(): Promise<void> {
         logger.info('Running in test mode, continuing despite initialization error');
         workerInitialized = true;
       } else {
-        throw new Error('Worker initialization failed: ' + (error as Error).message);
+        // Log more details to help with troubleshooting
+        if (error instanceof Error) {
+          logger.error(`Worker initialization failed with message: ${error.message}`);
+          if (error.stack) {
+            logger.error(`Stack trace: ${error.stack}`);
+          }
+        }
+        
+        throw new Error('Worker initialization failed: ' + (error instanceof Error ? error.message : String(error)));
       }
     }
+  } else {
+    logger.debug('Worker already initialized, skipping initialization');
   }
 }
 

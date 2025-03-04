@@ -219,14 +219,40 @@ export class EasWorker {
     try {
       // Initialize Supabase client first if available
       if (supabaseService) {
-        supabaseService.initialize();
-        logger.info('Supabase client initialized for EAS worker');
+        logger.info('Attempting to initialize Supabase client for EAS worker');
+        const client = supabaseService.initialize();
+        if (client) {
+          logger.info('Supabase client initialized successfully for EAS worker');
+        } else {
+          logger.error('Supabase client initialization returned null. Check environment variables:',
+            {
+              supabaseUrl: process.env.SUPABASE_URL ? 'Set' : 'Not set',
+              supabaseKey: process.env.SUPABASE_KEY ? 'Set' : 'Not set', 
+              supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'Set' : 'Not set'
+            }
+          );
+          throw new Error('Supabase client initialization failed. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
+        }
+      } else {
+        logger.error('Supabase service is not available');
+        throw new Error('Supabase service is not available. This is required for the EAS worker.');
       }
       
       // Set up fallbacks for key methods: Use Supabase's direct table access if DbService fails
+      logger.info('Setting up database fallback mechanisms');
       this.setupSupabaseFallbacks();
       
+      // Verify EAS endpoints and Schema UID are configured
+      const endpoints = Object.entries(this.easService.getGraphQLClients());
+      if (endpoints.length === 0) {
+        logger.error('No EAS endpoints configured. Check EAS_ENDPOINT_* environment variables.');
+        throw new Error('No EAS endpoints configured. At least one EAS endpoint is required.');
+      }
+      
+      logger.info(`Configured EAS endpoints: ${Object.keys(this.easService.getGraphQLClients()).join(', ')}`);
+      
       // Initialize EAS service with our enhanced dbService
+      logger.info('Initializing EAS service');
       await this.easService.initialize();
       
       this.initialized = true;

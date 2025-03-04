@@ -229,53 +229,82 @@ export class EasService {
     // Use the smaller of our timestamp or maxSafeInt to avoid overflow
     const safeTimestamp = Math.min(timestampUnix, maxSafeInt);
     
-    try {
-      logger.info(`Fetching ${limit} attestations for ${chain} since ${new Date(safeTimestamp * 1000).toISOString()}`);
-      
-      // Create a custom query with the specified limit
-      const query = gql`
-        query GetAttestations($schemaId: String!, $timestamp: Int!, $limit: Int!) {
-          attestations(
-            where: {
-              schemaId: {
-                equals: $schemaId
+    // Log the schema UID being used
+    const schemaId = this.chainConfigs[chain as keyof typeof CHAIN_CONFIG].schemaUID;
+    logger.info(`Using schema UID for ${chain}: ${schemaId}`);
+    
+    // Retry logic for GraphQL queries
+    const maxRetries = 3;
+    let retryCount = 0;
+    
+    while (retryCount < maxRetries) {
+      try {
+        logger.info(`Fetching ${limit} attestations for ${chain} since ${new Date(safeTimestamp * 1000).toISOString()} (attempt ${retryCount + 1}/${maxRetries})`);
+        
+        // Create a custom query with the specified limit
+        const query = gql`
+          query GetAttestations($schemaId: String!, $timestamp: Int!, $limit: Int!) {
+            attestations(
+              where: {
+                schemaId: {
+                  equals: $schemaId
+                }
+                timeCreated: {
+                  gt: $timestamp
+                }
               }
-              timeCreated: {
-                gt: $timestamp
-              }
+              take: $limit
+              orderBy: { timeCreated: asc }
+            ) {
+              id
+              attester
+              recipient
+              revocationTime
+              timeCreated
+              data
+              decodedDataJson
             }
-            take: $limit
-            orderBy: { timeCreated: asc }
-          ) {
-            id
-            attester
-            recipient
-            revocationTime
-            timeCreated
-            data
-            decodedDataJson
           }
+        `;
+        
+        // Query the EAS indexer via GraphQL with timeout
+        const response = await Promise.race([
+          client.query({
+            query,
+            variables: {
+              schemaId,
+              timestamp: safeTimestamp,
+              limit
+            },
+            fetchPolicy: 'network-only' // Skip cache to ensure fresh data
+          }),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error(`GraphQL query timed out after 30s for chain ${chain}`)), 30000)
+          )
+        ]) as GraphQLQueryResponse;
+        
+        const attestations = response.data.attestations;
+        
+        logger.info(`Successfully fetched ${attestations.length} attestations from ${chain}`);
+        return attestations;
+      } catch (error) {
+        retryCount++;
+        logger.error(`Error fetching attestations from ${chain} (attempt ${retryCount}/${maxRetries}):`, error);
+        
+        if (retryCount >= maxRetries) {
+          logger.error(`Failed to fetch attestations from ${chain} after ${maxRetries} attempts`);
+          throw error;
         }
-      `;
-      
-      // Query the EAS indexer via GraphQL
-      const response = await client.query({
-        query,
-        variables: {
-          schemaId: this.chainConfigs[chain as keyof typeof CHAIN_CONFIG].schemaUID,
-          timestamp: safeTimestamp,
-          limit
-        }
-      }) as GraphQLQueryResponse;
-      
-      const attestations = response.data.attestations;
-      
-      logger.info(`Fetched ${attestations.length} attestations from ${chain}`);
-      return attestations;
-    } catch (error) {
-      logger.error(`Error fetching attestations from ${chain}`, error);
-      throw error;
+        
+        // Exponential backoff: 2^retryCount * 1000ms (2s, 4s, 8s, ...)
+        const backoffTime = Math.pow(2, retryCount) * 1000;
+        logger.info(`Retrying in ${backoffTime}ms...`);
+        await new Promise(resolve => setTimeout(resolve, backoffTime));
+      }
     }
+    
+    // This should never execute due to the throw in the catch block above
+    return [];
   }
   
   /**
