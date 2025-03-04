@@ -19,4 +19,14 @@ apiRouter.use('/ogc', ogcRouter);
 // Register cron endpoint for Vercel
 apiRouter.post('/cron/sync', handler);
 
+// Also add a GET endpoint for debugging
+apiRouter.get('/cron/sync/test', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    message: 'Cron endpoint is properly registered',
+    timestamp: new Date().toISOString(),
+    instructions: 'Send a POST request to /api/cron/sync to trigger sync manually'
+  });
+});
+
 export { apiRouter };
