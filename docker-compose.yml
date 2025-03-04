@@ -1,56 +1,29 @@
 version: '3.8'
 
 services:
-  db:
-    image: postgis/postgis:15-3.3
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: astral
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   api:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    depends_on:
-      db:
-        condition: service_healthy
     ports:
       - "3000:3000"
-    environment:
-      - DATABASE_URL=postgres://postgres:postgres@db:5432/astral
-      - PORT=3000
-      - NODE_ENV=development
-      - EAS_ENDPOINT_ARBITRUM=https://arbitrum.easscan.org/graphql
-      - EAS_ENDPOINT_CELO=https://celo.easscan.org/graphql
-      - EAS_ENDPOINT_SEPOLIA=https://sepolia.easscan.org/graphql
-      - EAS_ENDPOINT_BASE=https://base.easscan.org/graphql
-      - EAS_SCHEMA_UID=0xba4171c92572b1e4f241d044c32cdf083be9fd946b8766977558ca6378c824e2
+    env_file:
+      - ./backend/.env.development
     volumes:
       - ./backend:/app
       - /app/node_modules
 
-  pgadmin:
-    image: dpage/pgadmin4
-    restart: unless-stopped
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@astral.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    ports:
-      - "5050:80"
-    depends_on:
-      - db
+  # pgadmin:
+  #   image: dpage/pgadmin4
+  #   restart: unless-stopped
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: admin@astral.com
+  #     PGADMIN_DEFAULT_PASSWORD: admin
+  #   ports:
+  #     - "5050:80"
+  #   depends_on:
+  #     - db
 
 volumes:
   postgres_data:

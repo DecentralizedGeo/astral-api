@@ -2,14 +2,50 @@
   "version": 2,
   "builds": [
     {
-      "src": "dist/index.js",
+      "src": "src/index.ts",
       "use": "@vercel/node"
     }
   ],
   "routes": [
+    { 
+      "src": "/api/v0/config", 
+      "dest": "src/index.ts" 
+    },
+    { 
+      "src": "/api/v0/location-proofs", 
+      "dest": "src/index.ts"
+    },
+    { 
+      "src": "/api/v0/location-proofs/stats", 
+      "dest": "src/index.ts"
+    },
+    { 
+      "src": "/api/v0/location-proofs/(.*)", 
+      "dest": "src/index.ts"
+    },
+    { 
+      "src": "/api/sync", 
+      "dest": "src/index.ts"
+    },
+    { 
+      "src": "/api/sync/status", 
+      "dest": "src/index.ts"
+    },
+    { 
+      "src": "/api/sync/revocations", 
+      "dest": "src/index.ts"
+    },
+    { 
+      "src": "/api/sync/worker", 
+      "dest": "src/index.ts"
+    },
+    { 
+      "src": "/api/cron/sync", 
+      "dest": "src/index.ts"
+    },
     {
       "src": "/(.*)",
-      "dest": "dist/index.js"
+      "dest": "src/index.ts"
     }
   ],
   "crons": [

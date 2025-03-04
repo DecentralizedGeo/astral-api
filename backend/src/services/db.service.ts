@@ -112,7 +112,7 @@ export class DbService {
       const result = await client.query(query, values);
       await client.query('COMMIT');
       
-      return result.rows[0] as LocationProof;
+      return result.rows[0] as unknown as LocationProof;
     } catch (error) {
       await client.query('ROLLBACK');
       logger.error('Error creating location proof:', error);

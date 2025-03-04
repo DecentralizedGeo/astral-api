@@ -36,33 +36,15 @@ app.get('/', (req, res) => {
     title: 'Astral Protocol Location Proof API',
     description: 'API for querying location proof attestations across multiple blockchains',
     version: 'v0',
-    links: [
-      {
-        rel: 'self',
-        href: '/',
-        type: 'application/json'
-      },
-      {
-        rel: 'api',
-        href: '/api/v0',
-        type: 'application/json'
-      },
-      {
-        rel: 'config',
-        href: '/api/v0/config',
-        type: 'application/json'
-      },
-      {
-        rel: 'sync',
-        href: '/api/sync',
-        type: 'application/json'
-      },
-      {
-        rel: 'location-proofs',
-        href: '/api/v0/location-proofs',
-        type: 'application/json'
-      }
-    ]
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/health',
+      config: '/api/v0/config',
+      locationProofs: '/api/v0/location-proofs',
+      locationProofsStats: '/api/v0/location-proofs/stats',
+      syncStatus: '/api/sync/status',
+      triggerSync: '/api/sync'
+    }
   });
 });
 

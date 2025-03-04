@@ -87,7 +87,7 @@ class MockEasWorker {
     getGraphQLClients: () => ({
       arbitrum: {},
       celo: {},
-      sepolia: {},
+    sepolia: {},
       base: {}
     })
   };
