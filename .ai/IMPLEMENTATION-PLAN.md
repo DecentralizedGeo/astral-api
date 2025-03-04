@@ -153,7 +153,44 @@ Below is a plan broken down into **small tasks** that an AI agent can execute **
 
 ---
 
-## Phase 7: Deployment & Production Readiness ⬜
+## Phase 8: OGC API Features Implementation ✅
+
+0. **Create new branch**: Build this on a new branch, we'll open a PR on Github once it is pushed
+1. **Choose Framework**: Express.js.
+2. **Add Routes**:
+   - `/ogc/` (Landing Page): Return JSON with API info & links.
+   - `/ogc/conformance`: Return an array of OGC conformance URIs.
+   - `/ogc/collections`: List available data collections (e.g., `location-proofs`).
+   - `/ogc/collections/location-proofs`: Return metadata about the collection.
+   - `/ogc/collections/location-proofs/items`: Return an array of location proofs in GeoJSON FeatureCollection.
+     - Support `bbox` & `datetime` query params.
+3. **GeoJSON Formatting**:
+   - Convert each row into a `Feature` with `id`, `geometry`, `properties`.
+   - `geometry` from DB `geometry` column (could be any valid GeoJSON geometry type).
+   - `properties` include `chain`, `prover`, etc.
+4. **Pagination**: Add `limit` & `offset` or a `next` link.
+5. **OGC Validation**:
+   - Download OGC API validator.
+   - Test each endpoint.
+6. **Document**: 
+   - Update documentation so this is thoroughly documented
+   - Update all references to the endpoint to refer to api.astral.global
+
+---
+
+## Phase 8: GraphQL API with Apollo ⬜
+
+0. **Configuration**: The endpoint should be available at `/graphql`
+1. **Install Dependencies**: `npm install apollo-server graphql` (or relevant libs).
+2. **Create `schema.graphql`** with appropriate types and queries.
+3. **Implement Resolvers** for queries and mutations.
+4. **Set Up Apollo Server** and merge with existing Express app.
+5. **Add Security Features** like rate limiting and depth limiting.
+6. **Create Documentation** for GraphQL API.
+
+---
+
+## Phase 9: Deployment & Production Readiness ⬜
 
 1. **Production Environment Setup**:
    - Configure production Supabase project
@@ -183,32 +220,6 @@ Below is a plan broken down into **small tasks** that an AI agent can execute **
 ---
 
 ## Future Work
-
-### OGC API Features Implementation
-1. **Choose Framework**: Express.js, Fastify, or Flask (Python). For Node, Express is common.
-2. **Add Routes**:
-   - `/` (Landing Page): Return JSON with API info & links.
-   - `/conformance`: Return an array of OGC conformance URIs.
-   - `/collections`: List available data collections (e.g., `location-proofs`).
-   - `/collections/location-proofs`: Return metadata about the collection.
-   - `/collections/location-proofs/items`: Return an array of location proofs in GeoJSON FeatureCollection.
-     - Support `bbox` & `datetime` query params.
-3. **GeoJSON Formatting**:
-   - Convert each row into a `Feature` with `id`, `geometry`, `properties`.
-   - `geometry` from DB `geometry` column (could be any valid GeoJSON geometry type).
-   - `properties` include `chain`, `prover`, etc.
-4. **Pagination**: Add `limit` & `offset` or a `next` link.
-5. **OGC Validation**:
-   - Download OGC API validator.
-   - Test each endpoint.
-
-### GraphQL API with Apollo
-1. **Install Dependencies**: `npm install apollo-server graphql` (or relevant libs).
-2. **Create `schema.graphql`** with appropriate types and queries.
-3. **Implement Resolvers** for queries and mutations.
-4. **Set Up Apollo Server** and merge with existing Express app.
-5. **Add Security Features** like rate limiting and depth limiting.
-6. **Create Documentation** for GraphQL API.
 
 ### Advanced Features
 1. **Enable Subscriptions** for real-time updates.
