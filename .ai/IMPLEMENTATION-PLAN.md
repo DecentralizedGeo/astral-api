@@ -178,7 +178,7 @@ Below is a plan broken down into **small tasks** that an AI agent can execute **
 
 ---
 
-## Phase 8: GraphQL API with Apollo ⬜
+## Phase 8: GraphQL API with Apollo ✅
 
 0. **Configuration**: The endpoint should be available at `/graphql`
 1. **Install Dependencies**: `npm install apollo-server graphql` (or relevant libs).
@@ -206,6 +206,7 @@ Below is a plan broken down into **small tasks** that an AI agent can execute **
    - Finalize API documentation
    - Create deployment guide
    - Document maintenance procedures
+   - Make sure the docs are correct. I notice in backend/docs/api-reference.md, for example, the Response JSON is incomplete (doesn't include the ogc  endpoints). Please complete a final check.
 
 4. **Security Review**:
    - Audit authentication mechanisms
