@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 /**
  * Cron handler for Vercel to trigger the EAS sync process
  * This endpoint is called automatically by Vercel's cron scheduler
+ * Can be triggered manually with a POST request to /api/cron/sync
  */
 export default async function handler(req: Request, res: Response) {
   // Only allow POST requests from Vercel

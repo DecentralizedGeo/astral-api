@@ -49,6 +49,7 @@ app.get('/', (req, res) => {
       locationProofsStats: '/api/v0/location-proofs/stats',
       syncStatus: '/api/sync/status',
       triggerSync: '/api/sync',
+      cronSync: '/api/cron/sync',
       ogcApi: '/api/ogc',
       graphql: '/graphql'
     }
