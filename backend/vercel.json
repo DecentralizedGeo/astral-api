@@ -51,7 +51,7 @@
   "crons": [
     {
       "path": "/api/cron/sync",
-      "schedule": "*/15 * * * *"
+      "schedule": "*/1 * * * *"
     }
   ]
 }

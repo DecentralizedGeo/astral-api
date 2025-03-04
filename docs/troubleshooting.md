@@ -311,6 +311,40 @@ function parseLocationProof(proof) {
 - Include or exclude revoked attestations with the `includeRevoked` parameter
 - Verify revocation status on the blockchain
 
+## Sync Issues
+
+### 1. Automatic Sync Not Working
+
+**Symptoms:**
+- New attestations not appearing in the API
+- Status endpoint shows no recent syncs
+
+**Possible Causes:**
+- Cron job issues
+- Service configuration problems
+- Database connection issues
+
+**Solutions:**
+- Check sync status: `GET /api/sync/status`
+- Manually trigger a sync: `POST /api/cron/sync`
+- Test endpoint availability: `GET /api/cron/sync/test`
+- Wait for the automatic sync (runs every minute)
+
+### 2. Revocation Checks Not Updated
+
+**Symptoms:**
+- Revoked attestations still show as valid
+- Revocation status isn't current
+
+**Possible Causes:**
+- Revocation checking temporarily disabled
+- Sync job not completing fully
+
+**Solutions:**
+- Check the API status for information about revocation checking
+- Manually check revocation status on-chain
+- Wait for the next sync cycle when revocation checks are enabled
+
 ## Reporting Issues
 
 If you encounter persistent issues that aren't covered in this guide:
@@ -334,4 +368,9 @@ GET https://api.astral.global/health
 For more detailed status information, including sync status:
 ```
 GET https://api.astral.global/api/sync/status
+```
+
+To verify the cron endpoint is correctly configured:
+```
+GET https://api.astral.global/api/cron/sync/test
 ```

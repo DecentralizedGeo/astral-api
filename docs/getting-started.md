@@ -11,9 +11,9 @@ This guide will help you get started with the Astral Protocol API, a service for
 
 ## What is Astral Protocol?
 
-Astral Protocol is a system for creating, storing, and verifying location proofs. These proofs are stored as attestations on multiple blockchains using the Ethereum Attestation Service (EAS).
+Astral's Location Proof Protocol provides a system for creating, storing, and verifying location proofs. These proofs are stored as attestations on multiple blockchains using the Ethereum Attestation Service (EAS).
 
-The Astral API provides a simple REST interface to query these attestations and verify location proofs.
+The Astral API provides a simple REST interface to query these attestations.
 
 ## API Overview
 
@@ -23,6 +23,7 @@ The Astral API provides:
 2. **Blockchain Sync** - Automatic synchronization with multiple blockchains
 3. **Spatial Queries** - Geographic filtering capabilities
 4. **Revocation Checking** - Verification of attestation validity
+5. **Automatic Sync** - Background synchronization runs every minute to keep data fresh
 
 ## Supported Blockchains
 
@@ -202,7 +203,7 @@ export default LocationProofsList;
 Now that you've made your first requests to the Astral API, check out these resources to learn more:
 
 - [API Reference](./api-reference.md) - Complete reference for all API endpoints
-- [Spatial Queries](./spatial-queries.md) - Guide to geographic filtering capabilities
+- [Data Model](./data-model.md) - Information about the data model and structure
 - [Authentication](./authentication.md) - Information about authentication (coming soon)
 - [SDK Documentation](./sdk-documentation.md) - Client SDKs for various languages (coming soon)
 

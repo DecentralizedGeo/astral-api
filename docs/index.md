@@ -17,7 +17,7 @@ Astral Protocol is a system for creating, storing, and verifying location proofs
 
 - **Multi-Chain Support**: Query location proofs from Arbitrum, Base, Celo, and Sepolia
 - **Spatial Queries**: Find location proofs within specific geographic areas
-- **Real-Time Syncing**: Automatic synchronization with blockchain data
+- **Real-Time Syncing**: Automatic synchronization with blockchain data every minute
 - **Revocation Checking**: Verify if location proofs have been revoked
 - **GeoJSON Support**: Work with standard GeoJSON location data
 
@@ -37,7 +37,7 @@ To start using the Astral API:
 
 1. Check out the [Getting Started Guide](./getting-started.md) for a quick introduction
 2. Read the [API Reference](./api-reference.md) for detailed endpoint information
-3. Learn about [Spatial Queries](./spatial-queries.md) for geographic filtering
+3. Explore the [Data Model](./data-model.md) to understand location proof structure
 
 ## Example Use Cases
 
