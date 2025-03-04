@@ -76,14 +76,14 @@ Follow these steps to deploy the Astral API backend to Vercel:
 ## Step 4: Test Your Deployment
 
 1. Test the deployment by visiting the following endpoints:
-   - `https://your-vercel-url.vercel.app/health` (should return status: "ok")
-   - `https://your-vercel-url.vercel.app/api/v0/config` (should return configuration)
+   - `https://api.astral.global/health` (should return status: "ok")
+   - `https://api.astral.global/api/v0/config` (should return configuration)
 
 2. To manually trigger a sync, make a POST request to:
-   - `https://your-vercel-url.vercel.app/api/sync`
+   - `https://api.astral.global/api/sync`
 
 3. To check the sync status, make a GET request to:
-   - `https://your-vercel-url.vercel.app/api/sync/status`
+   - `https://api.astral.global/api/sync/status`
 
 ## Notes
 

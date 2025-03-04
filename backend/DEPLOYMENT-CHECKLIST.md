@@ -42,30 +42,30 @@ Follow this checklist to ensure a successful deployment of the Astral API on Ver
    NODE_ENV=production
    ```
 
-4. ⬜ Deploy your project
-   - [ ] Click "Deploy"
-   - [ ] Wait for the deployment to finish
-   - [ ] Check the deployment logs for any errors
+4. ✅ Deploy your project
+   - [x] Click "Deploy"
+   - [x] Wait for the deployment to finish
+   - [x] Check the deployment logs for any errors
 
-5. ⬜ Enable Cron Jobs
-   - [ ] Go to your project settings in Vercel
-   - [ ] In the left sidebar, click on "Cron Jobs"
-   - [ ] Ensure the cron job for `/api/cron/sync` is enabled
-   - [ ] Verify it's scheduled to run every 15 minutes (`*/15 * * * *`)
+5. ✅ Enable Cron Jobs
+   - [x] Go to your project settings in Vercel
+   - [x] In the left sidebar, click on "Cron Jobs"
+   - [x] Ensure the cron job for `/api/cron/sync` is enabled
+   - [x] Verify it's scheduled to run every 15 minutes (`*/15 * * * *`)
 
 ## Post-Deployment Verification
 
-1. ⬜ Test API Endpoints
-   - [ ] `https://your-vercel-url.vercel.app/health` (should return status: "ok")
-   - [ ] `https://your-vercel-url.vercel.app/api/v0/config` (should return configuration)
+1. ✅ Test API Endpoints
+   - [x] `https://api.astral.global/health` (should return status: "ok")
+   - [x] `https://api.astral.global/api/v0/config` (should return configuration)
 
-2. ⬜ Test Sync Functionality
-   - [ ] Make a POST request to: `https://your-vercel-url.vercel.app/api/sync`
-   - [ ] Check the sync status with a GET request to: `https://your-vercel-url.vercel.app/api/sync/status`
+2. ✅ Test Sync Functionality
+   - [x] Make a POST request to: `https://api.astral.global/api/sync`
+   - [x] Check the sync status with a GET request to: `https://api.astral.global/api/sync/status`
 
-3. ⬜ Monitor the automatic cron job
-   - [ ] Check logs in Vercel dashboard after 15 minutes
-   - [ ] Make sure data is being synced correctly
+3. ✅ Monitor the automatic cron job
+   - [x] Check logs in Vercel dashboard after 15 minutes
+   - [x] Make sure data is being synced correctly
 
 ## Troubleshooting
 
