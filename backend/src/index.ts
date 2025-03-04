@@ -49,13 +49,20 @@ app.get('/', (req, res) => {
       locationProofsStats: '/api/v0/location-proofs/stats',
       syncStatus: '/api/sync/status',
       triggerSync: '/api/sync',
-      ogcApi: '/api/ogc'
+      ogcApi: '/api/ogc',
+      graphql: '/graphql'
     }
   });
 });
 
 // Connect API routes
 app.use('/api', apiRouter);
+
+// Set up Apollo GraphQL server - must be after other middleware
+import { setupApolloServer } from './graphql/server';
+setupApolloServer(app).catch(error => {
+  logger.error('Failed to set up GraphQL server:', error);
+});
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
