@@ -49,7 +49,8 @@ app.get('/', (req, res) => {
       locationProofsStats: '/api/v0/location-proofs/stats',
       syncStatus: '/api/sync/status',
       triggerSync: '/api/sync',
-      ogcApi: '/api/ogc'
+      ogcApi: '/api/ogc',
+      graphql: '/graphql'
     }
   });
 });

@@ -12,7 +12,7 @@ import { GraphQLContext } from './types';
  * @param app Express application instance
  * @returns Apollo Server instance
  */
-export async function setupApolloServer(app: any): Promise<ApolloServer> {
+export async function setupApolloServer(app: any): Promise<ApolloServer<GraphQLContext>> {
   try {
     // Create the Apollo Server
     const server = new ApolloServer<GraphQLContext>({

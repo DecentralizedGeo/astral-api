@@ -47,7 +47,7 @@ export const jsonScalar = new GraphQLScalarType({
     }
     
     if (ast.kind === Kind.BOOLEAN) {
-      return ast.value === 'true';
+      return ast.value;
     }
     
     if (ast.kind === Kind.NULL) {
@@ -88,7 +88,7 @@ function parseLiteral(ast: any) {
     case Kind.FLOAT:
       return parseFloat(ast.value);
     case Kind.BOOLEAN:
-      return ast.value === 'true';
+      return ast.value;
     case Kind.OBJECT:
       return parseObject(ast);
     case Kind.LIST:
