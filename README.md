@@ -112,6 +112,13 @@ For detailed instructions on deploying the API to Vercel:
 - [Vercel Deployment Guide](./backend/VERCEL-DEPLOY.md)
 - [Deployment Checklist](./backend/DEPLOYMENT-CHECKLIST.md)
 
+## Generate Documentation via `mkdocs`
+
+1. Initialize a python virtual environment and activate.
+2. Install required libraries va `pip install mkdocs mkdocs-material`
+3. Run `mkdocs build` to generate the static html files based on the markdown files found in `docs`
+4. Run `mkdocs serve --open` to run a local web server instance that opens the home page into your web browser
+
 ## License
 
 MIT
