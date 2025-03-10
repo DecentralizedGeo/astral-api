@@ -46,3 +46,6 @@ coverage/
 # Temp files
 tmp/
 temp/
+
+# Ignore the following for Doc Generation
+site/
