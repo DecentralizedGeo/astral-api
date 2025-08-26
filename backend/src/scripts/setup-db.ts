@@ -161,4 +161,7 @@ if (require.main === module) {
   setup();
 }
 
+// Export individual functions for testing
+export { testConnection, enablePostGIS, verifySetup, checkDatabaseReadiness, setup as setupDatabase };
+export { runMigrations };
 export default setup;
