@@ -28,7 +28,7 @@
     "@apollo/client": "^3.13.1",
     "@apollo/server": "^4.9.5",
     "@ethereum-attestation-service/eas-sdk": "^2.7.0",
-    "@supabase/supabase-js": "^2.49.1",
+    "@supabase/supabase-js": "^2.56.0",
     "axios": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
