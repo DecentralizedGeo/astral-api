@@ -12,6 +12,9 @@ dotenv.config({ path: process.env.NODE_ENV === 'development' ? '.env.development
 async function testConnection() {
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
+    max: 2, // Limit connections for session pooler
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 5000,
   });
 
   try {

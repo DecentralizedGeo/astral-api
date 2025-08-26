@@ -12,6 +12,9 @@ export class DbService {
   constructor() {
     this.pool = new Pool({
       connectionString: config.DATABASE_URL,
+      max: 5, // Limit concurrent connections for session pooler compatibility
+      idleTimeoutMillis: 10000, // Close idle connections quickly
+      connectionTimeoutMillis: 10000, // Connection timeout
     });
 
     // Test connection on initialization
