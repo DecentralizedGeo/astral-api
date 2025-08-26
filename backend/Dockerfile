@@ -1,15 +1,22 @@
-FROM node:20-slim
+FROM node:20
 
 WORKDIR /app
 
 COPY package*.json ./
 
-RUN npm install
+RUN npm install --include=dev
+
+# Rebuild symlinks to fix Docker symbolic link issues
+RUN npm rebuild
 
 COPY . .
 
-RUN npm run build
+RUN node ./node_modules/typescript/bin/tsc
+
+# Make initialization script executable
+RUN chmod +x scripts/docker-init.sh
 
 EXPOSE 3000
 
-CMD ["npm", "start"]
+# Use initialization script as entrypoint
+CMD ["./scripts/docker-init.sh"]
