@@ -1,5 +1,5 @@
-import { supabaseService } from '../services/supabase.service';
-import { LocationProofQueryParams } from '../models/types';
+import { supabaseService } from '../../src/services/supabase.service';
+import { LocationProofQueryParams } from '../../src/models/types';
 
 /**
  * Tests for spatial query functionality
@@ -21,7 +21,7 @@ describe('Supabase Spatial Queries', () => {
   test('should query location proofs within a bounding box', async () => {
     // Skip if Supabase is not available
     if (!supabaseService.isAvailable()) {
-      console.warn('Supabase client not available. Skipping test.');
+      test.skip('Supabase client not available');
       return;
     }
     
