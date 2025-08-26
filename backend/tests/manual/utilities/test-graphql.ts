@@ -4,7 +4,7 @@
  */
 
 import fetch from 'node-fetch';
-import { logger } from '../utils/logger';
+import { logger } from '../../../src/utils/logger';
 
 // Base URL for the API
 const baseUrl = 'http://localhost:3000/graphql';

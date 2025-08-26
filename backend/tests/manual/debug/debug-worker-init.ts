@@ -2,10 +2,10 @@
  * Debug EasWorker initialization issue
  */
 import 'dotenv/config';
-import { DbService } from '../services/db.service';
-import { supabaseService } from '../services/supabase.service';
-import { logger } from '../utils/logger';
-import { EasService } from '../services/eas.service';
+import { DbService } from '../../../src/services/db.service';
+import { supabaseService } from '../../../src/services/supabase.service';
+import { logger } from '../../../src/utils/logger';
+import { EasService } from '../../../src/services/eas.service';
 
 async function debugWorkerInit() {
   try {

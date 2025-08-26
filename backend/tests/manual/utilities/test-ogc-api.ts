@@ -5,7 +5,7 @@
 
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
-import { logger } from '../utils/logger';
+import { logger } from '../../../src/utils/logger';
 
 // Load environment variables
 dotenv.config();

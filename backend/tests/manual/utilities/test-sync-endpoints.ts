@@ -2,7 +2,7 @@
  * Script to test the sync API endpoints directly
  */
 import fetch from 'node-fetch';
-import { logger } from '../utils/logger';
+import { logger } from '../../../src/utils/logger';
 
 // Set the NODE_ENV to 'test' to use the mock worker
 process.env.NODE_ENV = 'test';

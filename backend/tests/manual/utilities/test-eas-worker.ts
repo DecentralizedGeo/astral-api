@@ -2,9 +2,9 @@
  * Script to test EAS worker initialization
  */
 import 'dotenv/config';
-import { EasWorker } from '../workers/eas-worker';
-import { logger } from '../utils/logger';
-import { easService } from '../services/eas.service';
+import { EasWorker } from '../../../src/workers/eas-worker';
+import { logger } from '../../../src/utils/logger';
+import { easService } from '../../../src/services/eas.service';
 
 async function testEasWorker() {
   try {

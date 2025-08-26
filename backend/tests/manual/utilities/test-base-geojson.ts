@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Script to test fetching and parsing GeoJSON attestations from Base chain
  * This script uses direct API calls without needing environment setup
@@ -8,7 +9,7 @@ import { ApolloClient, InMemoryCache, gql } from '@apollo/client/core';
 const log = {
   info: (msg: string) => console.log(`\x1b[32mINFO:\x1b[0m ${msg}`),
   warn: (msg: string) => console.log(`\x1b[33mWARN:\x1b[0m ${msg}`),
-  error: (msg: string, error?: any) => console.log(`\x1b[31mERROR:\x1b[0m ${msg}`, error || '')
+  error: (msg: string, error?: unknown) => console.log(`\x1b[31mERROR:\x1b[0m ${msg}`, error || '')
 };
 
 // Schema UID for location attestations

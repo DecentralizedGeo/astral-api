@@ -1,10 +1,11 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Script to test the sync implementation with mocks
  */
-import { logger } from '../utils/logger';
-import { EasWorker } from '../workers/eas-worker';
-import { DbService } from '../services/db.service';
-import { EasService } from '../services/eas.service';
+import { logger } from '../../../src/utils/logger';
+import { EasWorker } from '../../../src/workers/eas-worker';
+// import { DbService } from '../../../src/services/db.service';
+// import { EasService } from '../../../src/services/eas.service';
 
 // Set test mode
 process.env.NODE_ENV = 'test';
@@ -55,7 +56,7 @@ class MockEasService {
     };
   }
   
-  async processChain(chain: string) {
+  async processChain(_chain: string) {
     return 5;
   }
   

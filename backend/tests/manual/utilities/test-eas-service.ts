@@ -1,8 +1,8 @@
 #!/usr/bin/env ts-node
 
-import { DbService } from '../services/db.service';
-import { EasService } from '../services/eas.service';
-import { logger } from '../utils/logger';
+import { DbService } from '../../../src/services/db.service';
+import { EasService } from '../../../src/services/eas.service';
+import { logger } from '../../../src/utils/logger';
 
 async function main() {
   logger.info('Starting EAS service test');

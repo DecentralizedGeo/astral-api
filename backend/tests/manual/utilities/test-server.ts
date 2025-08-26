@@ -2,7 +2,7 @@
  * A simple script to check if the server is running
  */
 import fetch from 'node-fetch';
-import { logger } from '../utils/logger';
+import { logger } from '../../../src/utils/logger';
 
 // Try to reach the server's health endpoint
 async function checkServer() {

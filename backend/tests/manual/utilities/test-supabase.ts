@@ -1,4 +1,4 @@
-import { supabaseService } from '../services/supabase.service';
+import { supabaseService } from '../../../src/services/supabase.service';
 import dotenv from 'dotenv';
 
 // Load environment variables from .env file

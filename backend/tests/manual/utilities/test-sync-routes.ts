@@ -3,8 +3,8 @@
  */
 import express from 'express';
 import request from 'supertest';
-import { syncRouter } from '../api/routes/sync.routes';
-import { logger } from '../utils/logger';
+import { syncRouter } from '../../../src/api/routes/sync.routes';
+import { logger } from '../../../src/utils/logger';
 
 // Set test mode
 process.env.NODE_ENV = 'test';

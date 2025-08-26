@@ -1,8 +1,8 @@
 #!/usr/bin/env ts-node
 import dotenv from 'dotenv';
-import { DbService } from '../services/db.service';
-import { EasService } from '../services/eas.service';
-import { logger } from '../utils/logger';
+import { DbService } from '../../../src/services/db.service';
+import { EasService } from '../../../src/services/eas.service';
+import { logger } from '../../../src/utils/logger';
 
 // Load environment variables first - this MUST be before other imports
 dotenv.config({ path: '.env.development' });

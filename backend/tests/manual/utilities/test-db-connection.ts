@@ -3,8 +3,8 @@
  */
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
-import { config } from '../config';
-import { logger } from '../utils/logger';
+import { config } from '../../../src/config';
+import { logger } from '../../../src/utils/logger';
 
 async function testSupabaseConnection() {
   try {
