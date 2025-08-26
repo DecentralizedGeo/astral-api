@@ -40,6 +40,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS location_proofs_update_timestamp ON location_proofs;
 CREATE TRIGGER location_proofs_update_timestamp
 BEFORE UPDATE ON location_proofs
 FOR EACH ROW
