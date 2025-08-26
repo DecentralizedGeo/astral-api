@@ -2,14 +2,18 @@ import fs from 'fs';
 import path from 'path';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
+import { SchemaValidator } from '../scripts/validate-schema';
 
 // Load environment variables
 dotenv.config({ path: process.env.NODE_ENV === 'development' ? '.env.development' : '.env' });
 
 const runMigrations = async () => {
-  // Create a connection pool to the database
+  // Create a connection pool to the database with better configuration for session pooler
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
+    max: 2, // Limit concurrent connections for session pooler
+    idleTimeoutMillis: 10000, // Close idle connections quickly
+    connectionTimeoutMillis: 5000, // Shorter connection timeout
   });
 
   try {
