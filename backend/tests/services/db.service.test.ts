@@ -1,13 +1,13 @@
 import { Pool } from 'pg';
 
 // Mock the config module
-jest.mock('../config', () => ({
+jest.mock('../../src/config', () => ({
   config: {
     DATABASE_URL: 'postgres://user:password@localhost:5432/testdb',
   }
 }));
 
-import { dbService } from '../services/db.service';
+import { dbService } from '../../src/services/db.service';
 
 // Mock the PostgreSQL Pool
 jest.mock('pg', () => {
@@ -24,8 +24,6 @@ jest.mock('pg', () => {
 const mockPoolQuery = (Pool as unknown as jest.Mock).mock.results[0].value.query;
 
 describe('Database Service', () => {
-  let mockPool: jest.Mocked<Pool>;
-
   beforeEach(() => {
     jest.clearAllMocks();
   });
