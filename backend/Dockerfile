@@ -11,7 +11,7 @@ RUN npm rebuild
 
 COPY . .
 
-RUN node ./node_modules/typescript/bin/tsc
+RUN npm run build
 
 # Make initialization script executable
 RUN chmod +x scripts/docker-init.sh
