@@ -46,7 +46,7 @@ class MockEasWorker {
     return this.stopped;
   }
   
-  getStats() {
+  async getStats() {
     return {
       startTime: new Date(),
       lastSuccessfulRun: new Date(),
@@ -175,10 +175,10 @@ export class SyncController {
    */
   static async getStatus(req: Request, res: Response) {
     try {
-      await initializeWorker();
+      await initializeWorker(false); // Do not start the worker for status
       
       // Get worker stats
-      const stats = worker.getStats();
+      const stats = await worker.getStats();
       
       // Get supported chains
       const supportedChains = Object.keys(easService.getGraphQLClients()).sort();
@@ -256,7 +256,7 @@ export class SyncController {
         logger.info(`Manually triggering sync for chain: ${chain}`);
         
         // Check if worker is already processing this chain
-        const stats = worker.getStats();
+        const stats = await worker.getStats();
         if (stats.isRunning) {
           return res.status(409).json({
             status: 'error',
@@ -278,7 +278,7 @@ export class SyncController {
         logger.info('Manually triggering full sync cycle');
         
         // Check if worker is already running
-        const stats = worker.getStats();
+        const stats = await worker.getStats();
         if (stats.isRunning) {
           return res.status(409).json({
             status: 'error',
@@ -317,7 +317,7 @@ export class SyncController {
       await initializeWorker();
       
       // Check if revocation check is already running
-      const stats = worker.getStats();
+      const stats = await worker.getStats();
       if (stats.isRevocationCheckRunning) {
         return res.status(409).json({
           status: 'error',
