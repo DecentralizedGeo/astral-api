@@ -26,6 +26,64 @@ jest.mock('pg', () => ({
 
 import { SchemaValidator } from '../../src/scripts/validate-schema';
 
+// Shared full schema mocks for all tests
+const fullLocationProofsColumns = [
+  { column_name: 'id', data_type: 'bigint', is_nullable: 'NO', column_default: null },
+  { column_name: 'uid', data_type: 'character varying', is_nullable: 'NO', column_default: null },
+  { column_name: 'chain', data_type: 'character varying', is_nullable: 'NO', column_default: null },
+  { column_name: 'prover', data_type: 'character varying', is_nullable: 'NO', column_default: null },
+  { column_name: 'subject', data_type: 'character varying', is_nullable: 'YES', column_default: null },
+  { column_name: 'timestamp', data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
+  { column_name: 'event_timestamp', data_type: 'timestamp with time zone', is_nullable: 'NO', column_default: null },
+  { column_name: 'srs', data_type: 'character varying', is_nullable: 'YES', column_default: null },
+  { column_name: 'location_type', data_type: 'character varying', is_nullable: 'NO', column_default: null },
+  { column_name: 'location', data_type: 'text', is_nullable: 'NO', column_default: null },
+  { column_name: 'longitude', data_type: 'numeric', is_nullable: 'YES', column_default: null },
+  { column_name: 'latitude', data_type: 'numeric', is_nullable: 'YES', column_default: null },
+  { column_name: 'geometry', data_type: 'USER-DEFINED', is_nullable: 'YES', column_default: null },
+  { column_name: 'recipe_types', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
+  { column_name: 'recipe_payloads', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
+  { column_name: 'media_types', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
+  { column_name: 'media_data', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
+  { column_name: 'memo', data_type: 'text', is_nullable: 'YES', column_default: null },
+  { column_name: 'revoked', data_type: 'boolean', is_nullable: 'YES', column_default: null },
+  { column_name: 'created_at', data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
+  { column_name: 'updated_at', data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
+];
+const fullWorkerStatsColumns = [
+  { column_name: 'id', data_type: 'bigint', is_nullable: 'NO', column_default: null },
+  { column_name: 'updated_at', data_type: 'timestamp with time zone', is_nullable: 'NO', column_default: null },
+  { column_name: 'start_time', data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
+  { column_name: 'last_successful_run', data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
+  { column_name: 'last_run_duration', data_type: 'double precision', is_nullable: 'YES', column_default: null },
+  { column_name: 'total_runs', data_type: 'integer', is_nullable: 'YES', column_default: null },
+  { column_name: 'successful_runs', data_type: 'integer', is_nullable: 'YES', column_default: null },
+  { column_name: 'failed_runs', data_type: 'integer', is_nullable: 'YES', column_default: null },
+  { column_name: 'total_attestations_ingested', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
+  { column_name: 'last_run_attestations_ingested', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
+  { column_name: 'errors', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
+  { column_name: 'revocation_last_run', data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
+  { column_name: 'revocation_checked_count', data_type: 'integer', is_nullable: 'YES', column_default: null },
+  { column_name: 'revocation_revoked_count', data_type: 'integer', is_nullable: 'YES', column_default: null },
+  { column_name: 'is_running', data_type: 'boolean', is_nullable: 'YES', column_default: null },
+  { column_name: 'is_revocation_check_running', data_type: 'boolean', is_nullable: 'YES', column_default: null },
+];
+const fullSyncHistoryColumns = [
+  { column_name: 'id', data_type: 'bigint', is_nullable: 'NO', column_default: null },
+  { column_name: 'created_at', data_type: 'timestamp with time zone', is_nullable: 'NO', column_default: null },
+  { column_name: 'stats', data_type: 'jsonb', is_nullable: 'NO', column_default: null },
+];
+const fullLocationProofsIndexes = [
+  { indexname: 'idx_location_proofs_chain', indexdef: 'CREATE INDEX...' },
+  { indexname: 'idx_location_proofs_prover', indexdef: 'CREATE INDEX...' },
+  { indexname: 'idx_location_proofs_event_timestamp', indexdef: 'CREATE INDEX...' },
+  { indexname: 'idx_location_proofs_geometry', indexdef: 'CREATE INDEX...' },
+];
+const fullWorkerStatsIndexes = [];
+const fullSyncHistoryIndexes = [
+  { indexname: 'idx_sync_history_created_at', indexdef: 'CREATE INDEX...' },
+];
+
 describe('Schema Validator', () => {
   let validator: SchemaValidator;
 
