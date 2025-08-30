@@ -101,7 +101,7 @@ const worker = process.env.NODE_ENV === 'test'
 let workerInitialized = false;
 
 // Function to initialize the worker if not already initialized
-async function initializeWorker(): Promise<void> {
+async function initializeWorker(startWorker: boolean = true): Promise<void> {
   if (!workerInitialized) {
     logger.info('Initializing worker with environment:',
       {
@@ -130,11 +130,13 @@ async function initializeWorker(): Promise<void> {
       logger.info('Worker initialized successfully with Supabase client');
       
       // Start the worker in the background if not already running
-      if (!worker.isWorkerRunning() && worker.isStopped()) {
+      if (startWorker && !worker.isWorkerRunning() && worker.isStopped()) {
         logger.info('Starting background worker');
         worker.start().catch(error => {
           logger.error('Failed to start background worker:', error);
         });
+      } else if (!startWorker) {
+        logger.info('Worker initialized for status check only (not started)');
       } else {
         logger.info('Background worker already running, not starting again');
       }
