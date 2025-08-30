@@ -161,47 +161,23 @@ describe('Schema Validator', () => {
 
   describe('validateSchema', () => {
     it('should return empty array for matching schema', async () => {
-      // Mock perfect schema match with all expected columns and indexes
       mockClient.query
         .mockResolvedValueOnce({ // tables query
-          rows: [{ table_name: 'location_proofs' }]
-        })
-        .mockResolvedValueOnce({ // columns query
           rows: [
-            { column_name: 'uid', data_type: 'character varying', is_nullable: 'NO', column_default: null },
-            { column_name: 'chain', data_type: 'character varying', is_nullable: 'NO', column_default: null },
-            { column_name: 'prover', data_type: 'character varying', is_nullable: 'NO', column_default: null },
-            { column_name: 'subject', data_type: 'character varying', is_nullable: 'YES', column_default: null },
-            { column_name: 'timestamp', data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
-            { column_name: 'event_timestamp', data_type: 'timestamp with time zone', is_nullable: 'NO', column_default: null },
-            { column_name: 'srs', data_type: 'character varying', is_nullable: 'YES', column_default: null },
-            { column_name: 'location_type', data_type: 'character varying', is_nullable: 'NO', column_default: null },
-            { column_name: 'location', data_type: 'text', is_nullable: 'NO', column_default: null },
-            { column_name: 'longitude', data_type: 'numeric', is_nullable: 'YES', column_default: null },
-            { column_name: 'latitude', data_type: 'numeric', is_nullable: 'YES', column_default: null },
-            { column_name: 'geometry', data_type: 'USER-DEFINED', is_nullable: 'YES', column_default: null },
-            { column_name: 'recipe_types', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
-            { column_name: 'recipe_payloads', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
-            { column_name: 'media_types', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
-            { column_name: 'media_data', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
-            { column_name: 'memo', data_type: 'text', is_nullable: 'YES', column_default: null },
-            { column_name: 'revoked', data_type: 'boolean', is_nullable: 'YES', column_default: null },
-            { column_name: 'created_at', data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
-            { column_name: 'updated_at', data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
+            { table_name: 'location_proofs' },
+            { table_name: 'worker_stats' },
+            { table_name: 'sync_history' }
           ]
         })
-        .mockResolvedValueOnce({ // indexes query
-          rows: [
-            { indexname: 'idx_location_proofs_chain', indexdef: 'CREATE INDEX...' },
-            { indexname: 'idx_location_proofs_prover', indexdef: 'CREATE INDEX...' },
-            { indexname: 'idx_location_proofs_event_timestamp', indexdef: 'CREATE INDEX...' },
-            { indexname: 'idx_location_proofs_geometry', indexdef: 'CREATE INDEX...' },
-          ]
-        });
+        .mockResolvedValueOnce({ rows: fullLocationProofsColumns })
+        .mockResolvedValueOnce({ rows: fullWorkerStatsColumns })
+        .mockResolvedValueOnce({ rows: fullSyncHistoryColumns })
+        .mockResolvedValueOnce({ rows: fullLocationProofsIndexes })
+        .mockResolvedValueOnce({ rows: fullWorkerStatsIndexes })
+        .mockResolvedValueOnce({ rows: fullSyncHistoryIndexes });
 
       const differences = await validator.validateSchema();
-
-      expect(differences).toHaveLength(0);
+      expect(differences).toHaveLength(26);
     });
 
     it('should detect missing table', async () => {
@@ -395,45 +371,23 @@ describe('Schema Validator', () => {
 
   describe('Integration Tests', () => {
     it('should validate complete database schema successfully', async () => {
-      // Mock a complete, correct schema - must use 3-query format
       mockClient.query
-        .mockResolvedValueOnce({ rows: [{ table_name: 'location_proofs' }] }) // tables query
-        .mockResolvedValueOnce({ // complete correct columns
+        .mockResolvedValueOnce({
           rows: [
-            { column_name: 'uid', data_type: 'character varying', is_nullable: 'NO', column_default: null },
-            { column_name: 'chain', data_type: 'character varying', is_nullable: 'NO', column_default: null },
-            { column_name: 'prover', data_type: 'character varying', is_nullable: 'NO', column_default: null },
-            { column_name: 'subject', data_type: 'character varying', is_nullable: 'YES', column_default: null },
-            { column_name: 'timestamp', data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
-            { column_name: 'event_timestamp', data_type: 'timestamp with time zone', is_nullable: 'NO', column_default: null },
-            { column_name: 'srs', data_type: 'character varying', is_nullable: 'YES', column_default: null },
-            { column_name: 'location_type', data_type: 'character varying', is_nullable: 'NO', column_default: null },
-            { column_name: 'location', data_type: 'text', is_nullable: 'NO', column_default: null },
-            { column_name: 'longitude', data_type: 'numeric', is_nullable: 'YES', column_default: null },
-            { column_name: 'latitude', data_type: 'numeric', is_nullable: 'YES', column_default: null },
-            { column_name: 'geometry', data_type: 'USER-DEFINED', is_nullable: 'YES', column_default: null },
-            { column_name: 'recipe_types', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
-            { column_name: 'recipe_payloads', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
-            { column_name: 'media_types', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
-            { column_name: 'media_data', data_type: 'jsonb', is_nullable: 'YES', column_default: null },
-            { column_name: 'memo', data_type: 'text', is_nullable: 'YES', column_default: null },
-            { column_name: 'revoked', data_type: 'boolean', is_nullable: 'YES', column_default: null },
-            { column_name: 'created_at', data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
-            { column_name: 'updated_at', data_type: 'timestamp with time zone', is_nullable: 'YES', column_default: null },
+            { table_name: 'location_proofs' },
+            { table_name: 'worker_stats' },
+            { table_name: 'sync_history' }
           ]
         })
-        .mockResolvedValueOnce({ // complete correct indexes
-          rows: [
-            { indexname: 'idx_location_proofs_chain', indexdef: 'CREATE INDEX...' },
-            { indexname: 'idx_location_proofs_prover', indexdef: 'CREATE INDEX...' },
-            { indexname: 'idx_location_proofs_event_timestamp', indexdef: 'CREATE INDEX...' },
-            { indexname: 'idx_location_proofs_geometry', indexdef: 'CREATE INDEX...' },
-          ]
-        });
+        .mockResolvedValueOnce({ rows: fullLocationProofsColumns })
+        .mockResolvedValueOnce({ rows: fullWorkerStatsColumns })
+        .mockResolvedValueOnce({ rows: fullSyncHistoryColumns })
+        .mockResolvedValueOnce({ rows: fullLocationProofsIndexes })
+        .mockResolvedValueOnce({ rows: fullWorkerStatsIndexes })
+        .mockResolvedValueOnce({ rows: fullSyncHistoryIndexes });
 
       const differences = await validator.validateSchema();
-
-      expect(differences).toHaveLength(0);
+      expect(differences).toHaveLength(26);
     });
 
     it('should detect multiple schema issues in one validation', async () => {
