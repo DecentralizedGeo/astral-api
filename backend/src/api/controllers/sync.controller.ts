@@ -46,7 +46,7 @@ class MockEasWorker {
     return this.stopped;
   }
   
-  getStats() {
+  async getStats() {
     return {
       startTime: new Date(),
       lastSuccessfulRun: new Date(),
@@ -101,7 +101,7 @@ const worker = process.env.NODE_ENV === 'test'
 let workerInitialized = false;
 
 // Function to initialize the worker if not already initialized
-async function initializeWorker(): Promise<void> {
+async function initializeWorker(startWorker: boolean = true): Promise<void> {
   if (!workerInitialized) {
     logger.info('Initializing worker with environment:',
       {
@@ -130,11 +130,13 @@ async function initializeWorker(): Promise<void> {
       logger.info('Worker initialized successfully with Supabase client');
       
       // Start the worker in the background if not already running
-      if (!worker.isWorkerRunning() && worker.isStopped()) {
+      if (startWorker && !worker.isWorkerRunning() && worker.isStopped()) {
         logger.info('Starting background worker');
         worker.start().catch(error => {
           logger.error('Failed to start background worker:', error);
         });
+      } else if (!startWorker) {
+        logger.info('Worker initialized for status check only (not started)');
       } else {
         logger.info('Background worker already running, not starting again');
       }
@@ -175,10 +177,10 @@ export class SyncController {
    */
   static async getStatus(req: Request, res: Response) {
     try {
-      await initializeWorker();
+      await initializeWorker(false); // Do not start the worker for status
       
       // Get worker stats
-      const stats = worker.getStats();
+      const stats = await worker.getStats();
       
       // Get supported chains
       const supportedChains = Object.keys(easService.getGraphQLClients()).sort();
@@ -256,7 +258,7 @@ export class SyncController {
         logger.info(`Manually triggering sync for chain: ${chain}`);
         
         // Check if worker is already processing this chain
-        const stats = worker.getStats();
+        const stats = await worker.getStats();
         if (stats.isRunning) {
           return res.status(409).json({
             status: 'error',
@@ -278,7 +280,7 @@ export class SyncController {
         logger.info('Manually triggering full sync cycle');
         
         // Check if worker is already running
-        const stats = worker.getStats();
+        const stats = await worker.getStats();
         if (stats.isRunning) {
           return res.status(409).json({
             status: 'error',
@@ -317,7 +319,7 @@ export class SyncController {
       await initializeWorker();
       
       // Check if revocation check is already running
-      const stats = worker.getStats();
+      const stats = await worker.getStats();
       if (stats.isRevocationCheckRunning) {
         return res.status(409).json({
           status: 'error',

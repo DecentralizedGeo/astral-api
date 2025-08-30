@@ -10,7 +10,20 @@ async function setupSupabaseDb() {
   try {
     // Initialize Supabase client
     const client = supabaseService.initialize();
-    
+
+    // Initialize helper to check if a table exists
+    async function tableExists(tableName: string): Promise<boolean> {
+      if (!client) throw new Error('Supabase client not initialized');
+      const { data, error } = await client.rpc('execute_sql', {
+        sql: `SELECT to_regclass('public.${tableName}') IS NOT NULL AS exists;`
+      });
+      if (error) {
+        console.error(`Error checking if table ${tableName} exists:`, error);
+        return false;
+      }
+      return data && data[0] && (data[0].exists === true || data[0].exists === 't');
+    }
+
     if (!client) {
       console.error('Failed to initialize Supabase client');
       return;
@@ -41,44 +54,42 @@ async function setupSupabaseDb() {
     } else {
       console.log('Successfully created PostGIS extension');
     }
-    
-    // Create the location_proofs table
-    console.log('Creating location_proofs table...');
-    
-    const createTableSQL = `
-      CREATE TABLE IF NOT EXISTS public.location_proofs (
-        uid VARCHAR PRIMARY KEY,
-        chain VARCHAR NOT NULL,
-        prover VARCHAR NOT NULL,
-        subject VARCHAR,
-        timestamp TIMESTAMPTZ,
-        event_timestamp TIMESTAMPTZ NOT NULL,
-        srs VARCHAR,
-        location_type VARCHAR NOT NULL,
-        location TEXT NOT NULL,
-        longitude NUMERIC,
-        latitude NUMERIC,
-        recipe_types JSONB,
-        recipe_payloads JSONB,
-        media_types JSONB,
-        media_data JSONB,
-        memo TEXT,
-        revoked BOOLEAN DEFAULT false,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `;
-    
-    const { error: createTableError } = await client.rpc('execute_sql', {
-      sql: createTableSQL
-    });
-    
-    if (createTableError) {
-      console.error('Error creating location_proofs table:', createTableError);
-      return;
+
+    // Check and create location_proofs table
+    if (await tableExists('location_proofs')) {
+      console.log('Table location_proofs already exists, skipping creation.');
+    } else {
+      console.log('Creating location_proofs table...');
+      const createTableSQL = `
+        CREATE TABLE IF NOT EXISTS public.location_proofs (
+          uid VARCHAR PRIMARY KEY,
+          chain VARCHAR NOT NULL,
+          prover VARCHAR NOT NULL,
+          subject VARCHAR,
+          timestamp TIMESTAMPTZ,
+          event_timestamp TIMESTAMPTZ NOT NULL,
+          srs VARCHAR,
+          location_type VARCHAR NOT NULL,
+          location TEXT NOT NULL,
+          longitude NUMERIC,
+          latitude NUMERIC,
+          recipe_types JSONB,
+          recipe_payloads JSONB,
+          media_types JSONB,
+          media_data JSONB,
+          memo TEXT,
+          revoked BOOLEAN DEFAULT false,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+      `;
+      const { error: createTableError } = await client.rpc('execute_sql', { sql: createTableSQL });
+      if (createTableError) {
+        console.error('Error creating location_proofs table:', createTableError);
+        return;
+      }
+      console.log('Successfully created location_proofs table');
     }
-    
-    console.log('Successfully created location_proofs table');
     
     // Add PostGIS geometry column
     console.log('Adding geometry column...');
@@ -159,6 +170,73 @@ async function setupSupabaseDb() {
       console.log('Successfully created update trigger');
     }
     
+    // Check and create worker_stats table
+    if (await tableExists('worker_stats')) {
+      console.log('Table worker_stats already exists, skipping creation.');
+    } else {
+      console.log('Creating worker_stats table...');
+      const createWorkerStatsSQL = `
+        CREATE TABLE IF NOT EXISTS public.worker_stats (
+          id INTEGER PRIMARY KEY,
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          start_time TIMESTAMPTZ,
+          last_successful_run TIMESTAMPTZ,
+          last_run_duration DOUBLE PRECISION,
+          total_runs INTEGER,
+          successful_runs INTEGER,
+          failed_runs INTEGER,
+          total_attestations_ingested JSONB,
+          last_run_attestations_ingested JSONB,
+          errors JSONB,
+          revocation_last_run TIMESTAMPTZ,
+          revocation_checked_count INTEGER,
+          revocation_revoked_count INTEGER,
+          is_running BOOLEAN,
+          is_revocation_check_running BOOLEAN
+        );
+      `;
+      const { error: createWorkerStatsError } = await client.rpc('execute_sql', { sql: createWorkerStatsSQL });
+      if (createWorkerStatsError) {
+        console.error('Error creating worker_stats table:', createWorkerStatsError);
+      } else {
+        console.log('Successfully created worker_stats table');
+      }
+    }
+
+    // Check and create sync_history table
+    if (await tableExists('sync_history')) {
+      console.log('Table sync_history already exists, skipping creation.');
+    } else {
+      console.log('Creating sync_history table...');
+      const createSyncHistorySQL = `
+        CREATE TABLE IF NOT EXISTS public.sync_history (
+          id SERIAL PRIMARY KEY,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          stats JSONB
+        );
+      `;
+      const { error: createSyncHistoryError } = await client.rpc('execute_sql', { sql: createSyncHistorySQL });
+      if (createSyncHistoryError) {
+        console.error('Error creating sync_history table:', createSyncHistoryError);
+      } else {
+        console.log('Successfully created sync_history table');
+      }
+    }
+
+    // Create index on sync_history.created_at
+    console.log('Creating index on sync_history.created_at...');
+    const createSyncHistoryIndexSQL = `
+      CREATE INDEX IF NOT EXISTS idx_sync_history_created_at ON public.sync_history(created_at);
+    `;
+    const { error: createSyncHistoryIndexError } = await client.rpc('execute_sql', {
+      sql: createSyncHistoryIndexSQL
+    });
+    if (createSyncHistoryIndexError) {
+      console.error('Error creating index on sync_history.created_at:', createSyncHistoryIndexError);
+    } else {
+      console.log('Successfully created index on sync_history.created_at');
+    }
+
     console.log('Database setup complete!');
   } catch (error: any) {
     console.error('Unexpected error:', error.message);

@@ -40,12 +40,46 @@ https://api.astral.global
 
 ### Running with Docker
 
+The easiest way to get started is using Docker, which will automatically handle all the setup steps.
+
+**First-time setup:**
+
 ```bash
-# Start the API and database
-docker compose up
+# Windows (PowerShell)
+.\setup-docker.ps1
+
+# macOS/Linux
+./setup-docker.sh
+```
+
+This will create your `.env` file from the example. **Important:** Update `./backend/.env` with your actual Supabase credentials before proceeding.
+
+**Start the API:**
+
+```bash
+# Build and start the API with automatic initialization
+docker compose up --build
 
 # API will be available at http://localhost:3000
 ```
+
+The Docker container will automatically:
+
+- Copy `.env` configuration
+- Set up the database schema
+- Run database migrations  
+- Validate the schema
+- Perform initial data ingestion
+- Start the API server
+
+**Environment variables you need to configure:**
+
+- `SUPABASE_URL`: Your Supabase project URL
+- `SUPABASE_KEY`: Your Supabase anon key  
+- `SUPABASE_SERVICE_ROLE_KEY`: Your Supabase service role key
+- `DATABASE_URL`: Your database connection string
+
+See `./SUPABASE-SETUP.md` for detailed Supabase configuration instructions.
 
 ### Local Development
 
@@ -75,7 +109,7 @@ npm run worker:eas
 
 ## Project Structure
 
-```
+```text
 astral-api/
 ├── .ai/                   # AI-assisted design documents
 ├── backend/               # API server code

@@ -1,206 +1,102 @@
 # Supabase Setup Guide for Astral Protocol API
 
 ## Overview
-This guide provides instructions for setting up Supabase to work with the Astral Protocol API. You'll need to set up the database schema, configure permissions, and then sync attestations.
+
+This guide provides instructions for setting up Supabase to work with the Astral Protocol API. The database schema is defined in migration SQL files. You should run these files directly in the Supabase dashboard SQL editor to set up your production database.
 
 ## Prerequisites
+
 - A Supabase account
 - Access to the Supabase dashboard for your project
 - Your Supabase project URL and API key
 
 ## Database Setup
 
-1. **Install PostGIS Extension**
-   
-   In your Supabase dashboard, go to the SQL Editor and run:
-   ```sql
-   CREATE EXTENSION IF NOT EXISTS postgis;
-   ```
+### 1. Install and Configure Schema
 
-2. **Create Location Proofs Table**
-   
-   Run the following SQL to create the table:
-   ```sql
-   CREATE TABLE IF NOT EXISTS public.location_proofs (
-     uid VARCHAR PRIMARY KEY,
-     chain VARCHAR NOT NULL,
-     prover VARCHAR NOT NULL,
-     subject VARCHAR,
-     timestamp TIMESTAMPTZ,
-     event_timestamp TIMESTAMPTZ NOT NULL,
-     srs VARCHAR,
-     location_type VARCHAR NOT NULL,
-     location TEXT NOT NULL,
-     longitude NUMERIC,
-     latitude NUMERIC,
-     recipe_types JSONB,
-     recipe_payloads JSONB,
-     media_types JSONB,
-     media_data JSONB,
-     memo TEXT,
-     revoked BOOLEAN DEFAULT false,
-     created_at TIMESTAMPTZ DEFAULT NOW(),
-     updated_at TIMESTAMPTZ DEFAULT NOW()
-   );
+**Run the following migration files in order using the Supabase SQL Editor:**
 
-   -- Add geometry column
-   SELECT AddGeometryColumn('public', 'location_proofs', 'geometry', 4326, 'GEOMETRY', 2);
+1. [`001_initial_schema.sql`](backend/src/migrations/001_initial_schema.sql):
+   - Installs the PostGIS extension
+   - Creates the `location_proofs` table, geometry column, indexes, update trigger, RLS policies, and spatial query functions
+   - Sets up a publication for Supabase Realtime
+2. [`002_create_worker_stats.sql`](backend/src/migrations/002_create_worker_stats.sql):
+   - Creates the `worker_stats` table for tracking worker process statistics
+3. [`003_create_sync_history.sql`](backend/src/migrations/003_create_sync_history.sql):
+   - Creates the `sync_history` table for storing sync run stats as JSONB
+   - Adds an index on `created_at`
 
-   -- Create indexes
-   CREATE INDEX IF NOT EXISTS idx_location_proofs_chain ON public.location_proofs(chain);
-   CREATE INDEX IF NOT EXISTS idx_location_proofs_prover ON public.location_proofs(prover);
-   CREATE INDEX IF NOT EXISTS idx_location_proofs_subject ON public.location_proofs(subject);
-   CREATE INDEX IF NOT EXISTS idx_location_proofs_timestamp ON public.location_proofs(event_timestamp);
-   CREATE INDEX IF NOT EXISTS idx_location_proofs_geometry ON public.location_proofs USING GIST(geometry);
+> **How to run:**
+>
+> - Open the Supabase dashboard for your project
+> - Go to the SQL Editor
+> - Open each migration file above, copy its contents, and run it in the editor (in order)
 
-   -- Create update timestamp trigger
-   CREATE OR REPLACE FUNCTION update_timestamp()
-   RETURNS TRIGGER AS $$
-   BEGIN
-     NEW.updated_at = NOW();
-     RETURN NEW;
-   END;
-   $$ LANGUAGE plpgsql;
-      
-   DROP TRIGGER IF EXISTS set_timestamp ON public.location_proofs;
-   CREATE TRIGGER set_timestamp
-   BEFORE UPDATE ON public.location_proofs
-   FOR EACH ROW
-   EXECUTE PROCEDURE update_timestamp();
-   ```
+### 2. Environment Configuration
 
-3. **Configure Row Level Security (RLS) Policies**
+Update your `.env` file with the following values:
 
-   Enable Row Level Security and set up appropriate policies:
-   ```sql
-   -- Enable RLS on the table
-   ALTER TABLE public.location_proofs ENABLE ROW LEVEL SECURITY;
+```env
+# Database
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/astral
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
-   -- Create policy for anonymous read access
-   CREATE POLICY "Allow anonymous read access" 
-   ON public.location_proofs
-   FOR SELECT
-   USING (true);
+# EAS Endpoints
+EAS_ENDPOINT_ARBITRUM=https://arbitrum.easscan.org/graphql
+EAS_ENDPOINT_CELO=https://celo.easscan.org/graphql
+EAS_ENDPOINT_SEPOLIA=https://sepolia.easscan.org/graphql
+EAS_ENDPOINT_BASE=https://base.easscan.org/graphql
 
-   -- Create policy for service role to have full access
-   CREATE POLICY "Allow service role full access"
-   ON public.location_proofs
-   USING (auth.role() = 'service_role');
-   ```
+# EAS Schema UID
+EAS_SCHEMA_UID=0xba4171c92572b1e4f241d044c32cdf083be9fd946b8766977558ca6378c824e2
+EAS_SCHEMA_RAW_STRING="uint256 eventTimestamp,string srs,string locationType,string location,string[] recipeType,bytes[] recipePayload,string[] mediaType,string[] mediaData,string memo"
 
-4. **Create Spatial Query Functions**
+# API Configuration
+PORT=3000
+NODE_ENV=development
+```
 
-   Add these PostGIS functions for convenient spatial queries:
-   ```sql
-   -- Function to find location proofs within a certain distance of a point
-   CREATE OR REPLACE FUNCTION location_proofs_within(
-     lng NUMERIC,
-     lat NUMERIC,
-     distance_meters NUMERIC
-   ) RETURNS SETOF location_proofs AS $$
-   BEGIN
-     RETURN QUERY
-     SELECT *
-     FROM location_proofs
-     WHERE ST_DWithin(
-       geometry,
-       ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography,
-       distance_meters
-     );
-   END;
-   $$ LANGUAGE plpgsql;
+Obtain your Service Role Key from Supabase:
 
-   -- Function to find location proofs within a bounding box
-   CREATE OR REPLACE FUNCTION location_proofs_in_bbox(
-     min_lng NUMERIC,
-     min_lat NUMERIC,
-     max_lng NUMERIC,
-     max_lat NUMERIC
-   ) RETURNS SETOF location_proofs AS $$
-   BEGIN
-     RETURN QUERY
-     SELECT *
-     FROM location_proofs
-     WHERE geometry && ST_MakeEnvelope(min_lng, min_lat, max_lng, max_lat, 4326);
-   END;
-   $$ LANGUAGE plpgsql;
-   ```
-
-## Environment Configuration
-
-1. Update your `.env` file with the following values:
-   ```
-   # Database
-   DATABASE_URL=postgres://postgres:postgres@localhost:5432/astral
-   SUPABASE_URL=https://your-project-id.supabase.co
-   SUPABASE_KEY=your-anon-key
-   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-
-   # EAS Endpoints
-   EAS_ENDPOINT_ARBITRUM=https://arbitrum.easscan.org/graphql
-   EAS_ENDPOINT_CELO=https://celo.easscan.org/graphql
-   EAS_ENDPOINT_SEPOLIA=https://sepolia.easscan.org/graphql
-   EAS_ENDPOINT_BASE=https://base.easscan.org/graphql
-
-   # EAS Schema UID
-   EAS_SCHEMA_UID=0xba4171c92572b1e4f241d044c32cdf083be9fd946b8766977558ca6378c824e2
-   EAS_SCHEMA_RAW_STRING="uint256 eventTimestamp,string srs,string locationType,string location,string[] recipeType,bytes[] recipePayload,string[] mediaType,string[] mediaData,string memo"
-
-   # API Configuration
-   PORT=3000
-   NODE_ENV=development
-   ```
-
-2. Obtain your Service Role Key from Supabase:
-   - Go to Project Settings > API
-   - Find the "service_role" key (with secret access)
-   - Copy and paste into your `.env` file
+- Go to Project Settings > API
+- Find the "service_role" key (with secret access)
+- Copy and paste into your `.env` file
 
 ## Syncing Attestations
 
 After setting up the database, you can sync attestations using these commands:
 
-1. **Sync all chains**:
-   ```bash
-   npm run sync:historical
-   ```
+- **Sync all chains:**
 
-2. **Sync a specific chain**:
-   ```bash
-   # For Sepolia
-   npm run sync:historical:sepolia
-   
-   # For Base
-   npm run sync:historical:base
-   ```
+  ```bash
+  npm run sync:historical
+  ```
 
-3. **Sync with custom batch size**:
-   ```bash
-   # Sync Sepolia with batch size of 50
-   npx ts-node src/scripts/sync-historical-attestations.ts sepolia 50
-   ```
+- **Sync a specific chain:**
+
+  ```bash
+  npm run sync:historical:sepolia
+  npm run sync:historical:base
+  ```
+
+- **Sync with custom batch size:**
+
+  ```bash
+  npx ts-node src/scripts/sync-historical-attestations.ts sepolia 50
+  ```
 
 ## Using the API
 
-The Astral API now provides these endpoints:
+The Astral API provides these endpoints:
 
-1. **Config Information**:
-   ```
-   GET /api/v0/config
-   ```
-
-2. **Location Proofs**:
-   ```
-   GET /api/v0/location-proofs
-   GET /api/v0/location-proofs/:uid
-   GET /api/v0/location-proofs/stats
-   ```
-
-3. **Sync Management**:
-   ```
-   GET /api/sync/status
-   POST /api/sync
-   ```
+- `GET /api/v0/config` — Config Information
+- `GET /api/v0/location-proofs` — List location proofs
+- `GET /api/v0/location-proofs/:uid` — Get a specific proof
+- `GET /api/v0/location-proofs/stats` — Proof stats
+- `GET /api/sync/status` — Sync status
+- `POST /api/sync` — Trigger sync
 
 ## Direct Supabase API Access
 
@@ -222,13 +118,15 @@ const { data, error } = await supabase
   .limit(10)
 
 // Query with spatial filter (using PostgREST functions)
-const { data, error } = await supabase
+const { data: spatialData, error: spatialError } = await supabase
   .rpc('location_proofs_within', { 
     lng: -74.0060, 
     lat: 40.7128, 
     distance_meters: 1000 
   })
 ```
+
+See the [Supabase docs](https://supabase.com/docs/reference/javascript/select) for more usage examples.
 
 ## Troubleshooting
 
@@ -238,3 +136,9 @@ If you encounter issues:
 2. Check that the PostGIS extension is properly installed
 3. Ensure your service role key has the necessary permissions
 4. Check the application logs for more detailed error messages
+
+## Notes
+
+- The migration SQL files in [`backend/src/migrations/`](backend/src/migrations/) are the authoritative source for all schema, permissions, and functions. Always run these files to set up or update your production database.
+- If you add new tables or functions, update the migration files and reference them here.
+- If you change the migration SQL files, you must also update the expected schemas in [`backend/src/scripts/validate-schema.ts`](backend/src/scripts/validate-schema.ts) to keep schema validation accurate.

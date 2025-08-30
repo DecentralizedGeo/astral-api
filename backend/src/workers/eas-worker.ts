@@ -299,13 +299,10 @@ export class EasWorker {
       logger.warn('Previous ingestion still running, skipping');
       return;
     }
-    
     this.isRunning = true;
     const startTime = performance.now();
     this.stats.totalRuns++;
-    
     logger.info('Starting attestation ingestion cycle');
-    
     try {
       // Reset the last run stats
       this.stats.lastRunAttestationsIngested = {};
@@ -315,33 +312,21 @@ export class EasWorker {
       
       // Update stats
       for (const [chain, count] of Object.entries(results)) {
-        // Add to total
-        this.stats.totalAttestationsIngested[chain] = 
-          (this.stats.totalAttestationsIngested[chain] || 0) + count;
-        
-        // Store last run count
+        this.stats.totalAttestationsIngested[chain] = (this.stats.totalAttestationsIngested[chain] || 0) + count;
         this.stats.lastRunAttestationsIngested[chain] = count;
-        
-        // Log results
-        if (count > 0) {
-          logger.info(`Ingested ${count} attestations from ${chain}`);
-        } else {
-          logger.debug(`No new attestations from ${chain}`);
-        }
       }
-      
-      // Mark as successful
+
       this.stats.lastSuccessfulRun = new Date();
       this.stats.successfulRuns++;
-      
     } catch (error) {
       this.stats.failedRuns++;
-      this.recordError('Ingestion cycle failed', error);
+      await this.recordError('Ingestion cycle failed', error);
       logger.error('Error during ingestion cycle', error);
     } finally {
       const endTime = performance.now();
       this.stats.lastRunDuration = endTime - startTime;
       this.isRunning = false;
+      await this.upsertWorkerStats();
     }
   }
   
@@ -379,17 +364,12 @@ export class EasWorker {
       logger.warn('Previous revocation check still running, skipping');
       return;
     }
-    
     this.isRevocationCheckRunning = true;
     logger.info('Starting attestation revocation check');
-    
     try {
-      // Get all supported chains
       const chains = Object.keys(this.easService.getGraphQLClients());
       let totalChecked = 0;
       let totalRevoked = 0;
-      
-      // Check each chain
       for (const chain of chains) {
         try {
           // Get active attestations for this chain (not already revoked)
@@ -441,7 +421,7 @@ export class EasWorker {
             logger.debug(`No revoked attestations found on ${chain}`);
           }
         } catch (error) {
-          this.recordError(`Error checking revocations for chain ${chain}`, error, chain);
+          await this.recordError(`Error checking revocations for chain ${chain}`, error, chain);
           logger.error(`Error checking revocations for chain ${chain}`, error);
         }
       }
@@ -450,21 +430,70 @@ export class EasWorker {
       this.stats.revocationChecks.lastRun = new Date();
       this.stats.revocationChecks.checkedCount += totalChecked;
       this.stats.revocationChecks.revokedCount += totalRevoked;
-      
       logger.info(`Revocation check complete. Checked ${totalChecked} attestations, found ${totalRevoked} revoked`);
-      
     } catch (error) {
-      this.recordError('Revocation check failed', error);
+      await this.recordError('Revocation check failed', error);
       logger.error('Error during revocation check', error);
     } finally {
       this.isRevocationCheckRunning = false;
+      await this.upsertWorkerStats();
+    }
+  }
+
+  /**
+   * Upsert worker stats into Supabase worker_stats table and insert full stats into sync_history
+   */
+  private async upsertWorkerStats() {
+    const client = supabaseService.getClient();
+    if (!client) {
+      logger.error('Supabase client not available for upserting worker stats');
+      return;
+    }
+    const stats = this.stats; // Use in-memory stats, not DB
+    // Upsert singleton row in worker_stats (for current status)
+    const { error: workerStatsError } = await client
+      .from('worker_stats')
+      .upsert([
+        {
+          id: 1, // singleton row
+          updated_at: new Date().toISOString(),
+          start_time: stats.startTime,
+          last_successful_run: stats.lastSuccessfulRun,
+          last_run_duration: stats.lastRunDuration,
+          total_runs: stats.totalRuns,
+          successful_runs: stats.successfulRuns,
+          failed_runs: stats.failedRuns,
+          total_attestations_ingested: stats.totalAttestationsIngested,
+          last_run_attestations_ingested: stats.lastRunAttestationsIngested,
+          errors: stats.errors,
+          revocation_last_run: stats.revocationChecks.lastRun,
+          revocation_checked_count: stats.revocationChecks.checkedCount,
+          revocation_revoked_count: stats.revocationChecks.revokedCount,
+          is_running: stats.isRunning,
+          is_revocation_check_running: stats.isRevocationCheckRunning
+        }
+      ], { onConflict: 'id' });
+    if (workerStatsError) {
+      logger.error('Failed to upsert worker stats:', workerStatsError);
+    }
+    // Insert full stats object as JSONB into sync_history
+    const { error: syncHistoryError } = await client
+      .from('sync_history')
+      .insert([
+        {
+          stats: stats, // full stats object as JSONB
+          created_at: new Date().toISOString()
+        }
+      ]);
+    if (syncHistoryError) {
+      logger.error('Failed to insert sync history:', syncHistoryError);
     }
   }
   
   /**
    * Record an error in the worker stats
    */
-  private recordError(message: string, error: any, chain?: string): void {
+  private async recordError(message: string, error: any, chain?: string): Promise<void> {
     const errorMsg = error instanceof Error ? error.message : String(error);
     
     // Add to stats
@@ -478,17 +507,53 @@ export class EasWorker {
     if (this.stats.errors.length > this.maxErrorsToKeep) {
       this.stats.errors = this.stats.errors.slice(-this.maxErrorsToKeep);
     }
+
+    // Persist errors to Supabase
+    await this.upsertWorkerStats();
   }
-  
+
   /**
-   * Get current worker statistics
+   * Get current worker statistics from the database (worker_stats singleton row)
+   * Falls back to in-memory stats if DB is unavailable or row is missing
    */
-  getStats(): WorkerStats {
+  async getStats(): Promise<WorkerStats> {
+    const client = supabaseService.getClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from('worker_stats')
+          .select('*')
+          .eq('id', 1)
+          .single();
+        if (!error && data) {
+          // Map DB row to WorkerStats type
+          return {
+            startTime: new Date(data.start_time),
+            lastSuccessfulRun: data.last_successful_run ? new Date(data.last_successful_run) : null,
+            lastRunDuration: data.last_run_duration,
+            totalRuns: data.total_runs,
+            successfulRuns: data.successful_runs,
+            failedRuns: data.failed_runs,
+            totalAttestationsIngested: data.total_attestations_ingested || {},
+            lastRunAttestationsIngested: data.last_run_attestations_ingested || {},
+            errors: data.errors || [],
+            revocationChecks: {
+              lastRun: data.revocation_last_run ? new Date(data.revocation_last_run) : null,
+              checkedCount: data.revocation_checked_count || 0,
+              revokedCount: data.revocation_revoked_count || 0
+            },
+            isRunning: data.is_running || false,
+            isRevocationCheckRunning: data.is_revocation_check_running || false
+          };
+        }
+      } catch (err) {
+        logger.error('Failed to fetch worker stats from DB:', err);
+      }
+    }
+  // Fallback to in-memory stats
     return {
       ...this.stats,
-      // Add status information
       startTime: this.stats.startTime,
-      // Add active status flags
       isRunning: this.isRunning,
       isRevocationCheckRunning: this.isRevocationCheckRunning
     };
@@ -503,7 +568,7 @@ export class EasWorker {
     try {
       return await this.easService.processChain(chain);
     } catch (error) {
-      this.recordError(`Manual ingestion failed for chain ${chain}`, error, chain);
+      await this.recordError(`Manual ingestion failed for chain ${chain}`, error, chain);
       logger.error(`Error during manual ingestion for chain ${chain}`, error);
       throw error;
     }
