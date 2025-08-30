@@ -7,8 +7,11 @@ const syncRouter = Router();
 // Get sync status
 syncRouter.get('/status', SyncController.getStatus);
 
-// Trigger sync (can be used with ?chain=xxx query param)
-syncRouter.post('/', SyncController.triggerSync);
+// Conditionally register sync trigger endpoint
+const disableSyncTrigger = process.env.DISABLE_SYNC_TRIGGER === 'false';
+if (!disableSyncTrigger) {
+    syncRouter.post('/', SyncController.triggerSync);
+}
 
 // Trigger revocation check
 syncRouter.post('/revocations', SyncController.triggerRevocationCheck);
