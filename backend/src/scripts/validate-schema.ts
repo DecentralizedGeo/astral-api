@@ -1,3 +1,8 @@
+// NOTE: This script contains hardcoded expected schemas for location_proofs, worker_stats, and sync_history.
+// If you change the migration SQL files, you MUST update the expected columns and indexes here as well.
+// The migration SQL files in backend/src/migrations/ are the authoritative source of truth.
+// Consider automating this in the future to avoid drift.
+
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import { logger } from '../utils/logger';
@@ -38,7 +43,7 @@ export class SchemaValidator {
   }
 
   /**
-   * Get current database schema for location_proofs table
+   * Get current database schema for all relevant tables
    */
   async getCurrentSchema(): Promise<{
     tables: string[];
@@ -46,7 +51,7 @@ export class SchemaValidator {
     indexes: { [table: string]: TableIndex[] };
   }> {
     const client = await this.pool.connect();
-    
+    const relevantTables = ['location_proofs', 'worker_stats', 'sync_history'];
     try {
       // Get tables
       const tablesResult = await client.query(`
@@ -54,14 +59,12 @@ export class SchemaValidator {
         FROM information_schema.tables 
         WHERE table_schema = 'public' 
         AND table_type = 'BASE TABLE'
-        AND table_name = 'location_proofs'
-      `);
-      
+        AND table_name = ANY($1)
+      `, [relevantTables]);
       const tables = tablesResult.rows.map(row => row.table_name);
       const columns: { [table: string]: TableColumn[] } = {};
       const indexes: { [table: string]: TableIndex[] } = {};
-
-      // Get columns for each table
+      // Get columns and indexes for each table
       for (const table of tables) {
         const columnsResult = await client.query(`
           SELECT column_name, data_type, is_nullable, column_default
@@ -69,19 +72,14 @@ export class SchemaValidator {
           WHERE table_schema = 'public' AND table_name = $1
           ORDER BY ordinal_position
         `, [table]);
-        
         columns[table] = columnsResult.rows;
-
-        // Get indexes for each table
         const indexesResult = await client.query(`
           SELECT indexname, indexdef
           FROM pg_indexes
           WHERE schemaname = 'public' AND tablename = $1
         `, [table]);
-        
         indexes[table] = indexesResult.rows;
       }
-
       return { tables, columns, indexes };
     } finally {
       client.release();
@@ -89,14 +87,14 @@ export class SchemaValidator {
   }
 
   /**
-   * Compare current schema with expected schema
+   * Compare current schema with expected schema for all relevant tables
    */
   async validateSchema(): Promise<SchemaDifference[]> {
     const differences: SchemaDifference[] = [];
     const currentSchema = await this.getCurrentSchema();
-    
-    // Expected schema for location_proofs table
-    const expectedColumns = [
+
+    // --- location_proofs ---
+    const expectedLocationProofsColumns = [
       { column_name: 'uid', data_type: 'character varying', is_nullable: 'NO' },
       { column_name: 'chain', data_type: 'character varying', is_nullable: 'NO' },
       { column_name: 'prover', data_type: 'character varying', is_nullable: 'NO' },
@@ -118,35 +116,77 @@ export class SchemaValidator {
       { column_name: 'created_at', data_type: 'timestamp with time zone', is_nullable: 'YES' },
       { column_name: 'updated_at', data_type: 'timestamp with time zone', is_nullable: 'YES' },
     ];
-
-    const expectedIndexes = [
+    const expectedLocationProofsIndexes = [
       'idx_location_proofs_chain',
       'idx_location_proofs_prover', 
       'idx_location_proofs_event_timestamp',
       'idx_location_proofs_geometry',
     ];
+    this.compareTableSchema('location_proofs', expectedLocationProofsColumns, expectedLocationProofsIndexes, currentSchema, differences);
 
-    // Check if location_proofs table exists
-    if (!currentSchema.tables.includes('location_proofs')) {
+    // --- worker_stats ---
+    const expectedWorkerStatsColumns = [
+      { column_name: 'id', data_type: 'integer', is_nullable: 'NO' },
+      { column_name: 'updated_at', data_type: 'timestamp with time zone', is_nullable: 'NO' },
+      { column_name: 'start_time', data_type: 'timestamp with time zone', is_nullable: 'YES' },
+      { column_name: 'last_successful_run', data_type: 'timestamp with time zone', is_nullable: 'YES' },
+      { column_name: 'last_run_duration', data_type: 'double precision', is_nullable: 'YES' },
+      { column_name: 'total_runs', data_type: 'integer', is_nullable: 'YES' },
+      { column_name: 'successful_runs', data_type: 'integer', is_nullable: 'YES' },
+      { column_name: 'failed_runs', data_type: 'integer', is_nullable: 'YES' },
+      { column_name: 'total_attestations_ingested', data_type: 'jsonb', is_nullable: 'YES' },
+      { column_name: 'last_run_attestations_ingested', data_type: 'jsonb', is_nullable: 'YES' },
+      { column_name: 'errors', data_type: 'jsonb', is_nullable: 'YES' },
+      { column_name: 'revocation_last_run', data_type: 'timestamp with time zone', is_nullable: 'YES' },
+      { column_name: 'revocation_checked_count', data_type: 'integer', is_nullable: 'YES' },
+      { column_name: 'revocation_revoked_count', data_type: 'integer', is_nullable: 'YES' },
+      { column_name: 'is_running', data_type: 'boolean', is_nullable: 'YES' },
+      { column_name: 'is_revocation_check_running', data_type: 'boolean', is_nullable: 'YES' },
+    ];
+    // No indexes expected for worker_stats
+    this.compareTableSchema('worker_stats', expectedWorkerStatsColumns, [], currentSchema, differences);
+
+    // --- sync_history ---
+    const expectedSyncHistoryColumns = [
+      { column_name: 'id', data_type: 'bigint', is_nullable: 'NO' },
+      { column_name: 'created_at', data_type: 'timestamp with time zone', is_nullable: 'NO' },
+      { column_name: 'stats', data_type: 'jsonb', is_nullable: 'NO' },
+    ];
+    const expectedSyncHistoryIndexes = [
+      'idx_sync_history_created_at',
+    ];
+    this.compareTableSchema('sync_history', expectedSyncHistoryColumns, expectedSyncHistoryIndexes, currentSchema, differences);
+
+    return differences;
+  }
+
+  /**
+   * Compare a table's columns and indexes with expected schema
+   */
+  private compareTableSchema(
+    table: string,
+    expectedColumns: { column_name: string; data_type: string; is_nullable: string }[],
+    expectedIndexes: string[],
+    currentSchema: { tables: string[]; columns: { [table: string]: TableColumn[] }; indexes: { [table: string]: TableIndex[] } },
+    differences: SchemaDifference[]
+  ) {
+    if (!currentSchema.tables.includes(table)) {
       differences.push({
         type: 'missing_table',
-        table: 'location_proofs',
-        details: 'Table location_proofs does not exist'
+        table,
+        details: `Table ${table} does not exist`
       });
-      return differences;
+      return;
     }
-
-    const currentColumns = currentSchema.columns['location_proofs'] || [];
-    const currentIndexes = currentSchema.indexes['location_proofs'] || [];
-
+    const currentColumns = currentSchema.columns[table] || [];
+    const currentIndexes = currentSchema.indexes[table] || [];
     // Check columns
     for (const expectedCol of expectedColumns) {
       const currentCol = currentColumns.find(col => col.column_name === expectedCol.column_name);
-      
       if (!currentCol) {
         differences.push({
           type: 'missing_column',
-          table: 'location_proofs',
+          table,
           column: expectedCol.column_name,
           expected: expectedCol.data_type,
           details: `Column ${expectedCol.column_name} is missing`
@@ -154,7 +194,7 @@ export class SchemaValidator {
       } else if (currentCol.data_type !== expectedCol.data_type) {
         differences.push({
           type: 'column_type_mismatch',
-          table: 'location_proofs',
+          table,
           column: expectedCol.column_name,
           expected: expectedCol.data_type,
           actual: currentCol.data_type,
@@ -162,35 +202,31 @@ export class SchemaValidator {
         });
       }
     }
-
     // Check for extra columns
     for (const currentCol of currentColumns) {
       const expectedCol = expectedColumns.find(col => col.column_name === currentCol.column_name);
       if (!expectedCol) {
         differences.push({
           type: 'extra_column',
-          table: 'location_proofs',
+          table,
           column: currentCol.column_name,
           actual: currentCol.data_type,
           details: `Extra column ${currentCol.column_name} found`
         });
       }
     }
-
     // Check indexes
     for (const expectedIndex of expectedIndexes) {
       const currentIndex = currentIndexes.find(idx => idx.indexname === expectedIndex);
       if (!currentIndex) {
         differences.push({
           type: 'missing_index',
-          table: 'location_proofs',
+          table,
           expected: expectedIndex,
           details: `Index ${expectedIndex} is missing`
         });
       }
     }
-
-    return differences;
   }
 
   /**
