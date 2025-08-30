@@ -114,5 +114,11 @@ main() {
 # Handle graceful shutdown
 trap 'echo "🛑 Shutting down..."; exit 0' SIGTERM SIGINT
 
-# Run main function
-main
+# Only run main if API_ONLY is not true
+if [ "$API_ONLY" != "true" ]; then
+    # Run main function
+    main
+else
+    echo "API_ONLY=true detected, skipping backend initialization steps."
+    exec npm start
+fi

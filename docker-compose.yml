@@ -5,12 +5,15 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:3000"
     env_file:
       - ./backend/.env
     environment:
-      # Optional: Skip initial ingestion on startup (set to true if you want faster startup)
-      - SKIP_INITIAL_INGEST=false
+      # Indicate that only the API should run, skipping other initialization steps
+      API_ONLY: "true"
+      NODE_ENV: ${NODE_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DISABLE_SYNC_TRIGGER: ${DISABLE_SYNC_TRIGGER:-false}
     volumes:
       # Mount .env file to ensure it's available
       - ./backend/.env:/app/.env:ro
@@ -21,16 +24,20 @@ services:
       retries: 3
       start_period: 60s
 
-  # pgadmin:
-  #   image: dpage/pgadmin4
-  #   restart: unless-stopped
-  #   environment:
-  #     PGADMIN_DEFAULT_EMAIL: admin@astral.com
-  #     PGADMIN_DEFAULT_PASSWORD: admin
-  #   ports:
-  #     - "5050:80"
-  #   depends_on:
-  #     - db
-
-volumes:
-  postgres_data:
+  sync-service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # Optional: Skip initial ingestion on startup (set to true if you want faster startup)
+      SKIP_INITIAL_INGEST: ${SKIP_INITIAL_INGEST:-false}
+      # Ensure the worker runs all initialization steps
+      API_ONLY: false
+      NODE_ENV: ${NODE_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    command: ["npm", "run", "worker:eas"]
+    volumes:
+      - ./backend/.env:/app/.env:ro
