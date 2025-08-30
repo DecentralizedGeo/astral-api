@@ -299,13 +299,10 @@ export class EasWorker {
       logger.warn('Previous ingestion still running, skipping');
       return;
     }
-    
     this.isRunning = true;
     const startTime = performance.now();
     this.stats.totalRuns++;
-    
     logger.info('Starting attestation ingestion cycle');
-    
     try {
       // Reset the last run stats
       this.stats.lastRunAttestationsIngested = {};
@@ -315,33 +312,21 @@ export class EasWorker {
       
       // Update stats
       for (const [chain, count] of Object.entries(results)) {
-        // Add to total
-        this.stats.totalAttestationsIngested[chain] = 
-          (this.stats.totalAttestationsIngested[chain] || 0) + count;
-        
-        // Store last run count
+        this.stats.totalAttestationsIngested[chain] = (this.stats.totalAttestationsIngested[chain] || 0) + count;
         this.stats.lastRunAttestationsIngested[chain] = count;
-        
-        // Log results
-        if (count > 0) {
-          logger.info(`Ingested ${count} attestations from ${chain}`);
-        } else {
-          logger.debug(`No new attestations from ${chain}`);
-        }
       }
-      
-      // Mark as successful
+
       this.stats.lastSuccessfulRun = new Date();
       this.stats.successfulRuns++;
-      
     } catch (error) {
       this.stats.failedRuns++;
-      this.recordError('Ingestion cycle failed', error);
+      await this.recordError('Ingestion cycle failed', error);
       logger.error('Error during ingestion cycle', error);
     } finally {
       const endTime = performance.now();
       this.stats.lastRunDuration = endTime - startTime;
       this.isRunning = false;
+      await this.upsertWorkerStats();
     }
   }
   
@@ -379,17 +364,12 @@ export class EasWorker {
       logger.warn('Previous revocation check still running, skipping');
       return;
     }
-    
     this.isRevocationCheckRunning = true;
     logger.info('Starting attestation revocation check');
-    
     try {
-      // Get all supported chains
       const chains = Object.keys(this.easService.getGraphQLClients());
       let totalChecked = 0;
       let totalRevoked = 0;
-      
-      // Check each chain
       for (const chain of chains) {
         try {
           // Get active attestations for this chain (not already revoked)
@@ -441,7 +421,7 @@ export class EasWorker {
             logger.debug(`No revoked attestations found on ${chain}`);
           }
         } catch (error) {
-          this.recordError(`Error checking revocations for chain ${chain}`, error, chain);
+          await this.recordError(`Error checking revocations for chain ${chain}`, error, chain);
           logger.error(`Error checking revocations for chain ${chain}`, error);
         }
       }
@@ -588,7 +568,7 @@ export class EasWorker {
     try {
       return await this.easService.processChain(chain);
     } catch (error) {
-      this.recordError(`Manual ingestion failed for chain ${chain}`, error, chain);
+      await this.recordError(`Manual ingestion failed for chain ${chain}`, error, chain);
       logger.error(`Error during manual ingestion for chain ${chain}`, error);
       throw error;
     }
