@@ -527,17 +527,53 @@ export class EasWorker {
     if (this.stats.errors.length > this.maxErrorsToKeep) {
       this.stats.errors = this.stats.errors.slice(-this.maxErrorsToKeep);
     }
+
+    // Persist errors to Supabase
+    await this.upsertWorkerStats();
   }
-  
+
   /**
-   * Get current worker statistics
+   * Get current worker statistics from the database (worker_stats singleton row)
+   * Falls back to in-memory stats if DB is unavailable or row is missing
    */
-  getStats(): WorkerStats {
+  async getStats(): Promise<WorkerStats> {
+    const client = supabaseService.getClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from('worker_stats')
+          .select('*')
+          .eq('id', 1)
+          .single();
+        if (!error && data) {
+          // Map DB row to WorkerStats type
+          return {
+            startTime: new Date(data.start_time),
+            lastSuccessfulRun: data.last_successful_run ? new Date(data.last_successful_run) : null,
+            lastRunDuration: data.last_run_duration,
+            totalRuns: data.total_runs,
+            successfulRuns: data.successful_runs,
+            failedRuns: data.failed_runs,
+            totalAttestationsIngested: data.total_attestations_ingested || {},
+            lastRunAttestationsIngested: data.last_run_attestations_ingested || {},
+            errors: data.errors || [],
+            revocationChecks: {
+              lastRun: data.revocation_last_run ? new Date(data.revocation_last_run) : null,
+              checkedCount: data.revocation_checked_count || 0,
+              revokedCount: data.revocation_revoked_count || 0
+            },
+            isRunning: data.is_running || false,
+            isRevocationCheckRunning: data.is_revocation_check_running || false
+          };
+        }
+      } catch (err) {
+        logger.error('Failed to fetch worker stats from DB:', err);
+      }
+    }
+  // Fallback to in-memory stats
     return {
       ...this.stats,
-      // Add status information
       startTime: this.stats.startTime,
-      // Add active status flags
       isRunning: this.isRunning,
       isRevocationCheckRunning: this.isRevocationCheckRunning
     };
