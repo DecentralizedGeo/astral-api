@@ -1,7 +1,6 @@
 import { config, easEndpoints } from '../config';
 import { LocationProof } from '../models/types';
-import { EAS, SchemaEncoder } from '@ethereum-attestation-service/eas-sdk';
-import { JsonRpcProvider } from 'ethers';
+import { SchemaEncoder } from '@ethereum-attestation-service/eas-sdk';
 import { dbService, DbService } from './db.service';
 import { logger } from '../utils/logger';
 import { ApolloClient, InMemoryCache, gql } from '@apollo/client/core';
@@ -37,26 +36,18 @@ interface DecodedDataItem {
 const schemaUID = config.EAS_SCHEMA_UID || process.env.EAS_SCHEMA_UID || 
   '0xba4171c92572b1e4f241d044c32cdf083be9fd946b8766977558ca6378c824e2';
 
-// Map of chain names to EAS contract addresses and RPC URLs
+// Map of supported chain names to their schema UID
 const CHAIN_CONFIG = {
   arbitrum: {
-    rpcUrl: 'https://arbitrum-mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161',
-    contractAddress: '0xbD75f629A22Dc1ceD33dDA0b68c546A1c035c458',
     schemaUID
   },
   celo: {
-    rpcUrl: 'https://celo-mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161',
-    contractAddress: '0x72E1d8ccf5299fb36fEfD8CC4394B8ef7e98Af92',
     schemaUID
   },
   sepolia: {
-    rpcUrl: 'https://sepolia.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161',
-    contractAddress: '0xC2679fBD37d54388Ce493F1DB75320D236e1815e',
     schemaUID
   },
   base: {
-    rpcUrl: 'https://base-mainnet.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161',
-    contractAddress: '0x4200000000000000000000000000000000000021',
     schemaUID
   }
 };
@@ -66,8 +57,6 @@ const SCHEMA_STRING = "uint256 eventTimestamp,string srs,string locationType,str
 
 export class EasService {
   private dbService: DbService;
-  private providers: Record<string, JsonRpcProvider>;
-  private easClients: Record<string, EAS>;
   private graphqlClients: Record<string, ApolloClient<unknown>>;
   private lastProcessedTimestamps: Record<string, number>;
   private schemaEncoder: SchemaEncoder;
@@ -101,25 +90,14 @@ export class EasService {
   
   constructor(dbService: DbService) {
     this.dbService = dbService;
-    this.providers = {};
-    this.easClients = {};
     this.graphqlClients = {};
     this.lastProcessedTimestamps = {};
     this.schemaEncoder = new SchemaEncoder(SCHEMA_STRING);
     this.chainConfigs = CHAIN_CONFIG;
     
-    // Initialize providers, EAS clients, and GraphQL clients for each supported chain
-    for (const [chain, chainConfig] of Object.entries(CHAIN_CONFIG)) {
+    // Initialize GraphQL clients for each supported chain
+    for (const [chain] of Object.entries(CHAIN_CONFIG)) {
       try {
-        // Initialize providers and EAS clients
-        const provider = new JsonRpcProvider(chainConfig.rpcUrl);
-        this.providers[chain] = provider;
-        
-        const eas = new EAS(chainConfig.contractAddress);
-        // Use as unknown to bypass TypeScript checking since EAS.connect exists but TypeScript doesn't see it
-        (eas as unknown as { connect: (provider: JsonRpcProvider) => void }).connect(provider);
-        this.easClients[chain] = eas;
-        
         // Initialize GraphQL clients for each chain if endpoints are available
         // First try from config
         let endpoint = easEndpoints[chain as keyof typeof easEndpoints];
@@ -140,9 +118,9 @@ export class EasService {
           logger.warn(`No GraphQL endpoint configured for ${chain}, attestation fetching will be limited`);
         }
         
-        logger.info(`Initialized EAS client for ${chain}`);
+        logger.info(`Initialized chain config for ${chain}`);
       } catch (error) {
-        logger.error(`Failed to initialize EAS client for ${chain}`, error);
+        logger.error(`Failed to initialize chain config for ${chain}`, error);
       }
     }
   }
@@ -203,7 +181,7 @@ export class EasService {
    * @returns An array of EAS attestations
    */
   async fetchAttestations(chain: string, limit: number = 100, fromTimestamp?: string): Promise<EASAttestation[]> {
-    if (!this.easClients[chain]) {
+    if (!this.chainConfigs[chain as keyof typeof CHAIN_CONFIG]) {
       throw new Error(`Chain ${chain} is not supported`);
     }
     
@@ -694,7 +672,7 @@ export class EasService {
    * @returns Array of UIDs that have been revoked
    */
   async checkRevocationStatus(chain: string, uids: string[]): Promise<string[]> {
-    if (!this.easClients[chain]) {
+    if (!this.chainConfigs[chain as keyof typeof CHAIN_CONFIG]) {
       throw new Error(`Chain ${chain} is not supported`);
     }
 
