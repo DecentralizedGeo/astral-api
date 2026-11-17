@@ -11,7 +11,8 @@ interface EASAttestation {
   id: string; // This is the UID
   attester: string;
   recipient: string | null;
-  revocationTime: string; // "0" if not revoked
+  revocationTime: number | string; // EAS GraphQL returns an Int (0 if not revoked)
+  revoked?: boolean; // Indexer's revoked flag, when selected
   timeCreated: string; // unix timestamp
   data: string; // The raw attestation data
   decodedDataJson: string; // JSON string of decoded data (may be directly on attestation or in data property)
@@ -30,6 +31,28 @@ interface DecodedDataItem {
   value: {
     value: string | number | boolean | string[] | number[] | boolean[];
   };
+}
+
+/**
+ * Decide whether an EAS attestation is revoked.
+ *
+ * The EAS GraphQL indexer returns `revocationTime` as an Int (`0` when not
+ * revoked), not the string `"0"`, so a string comparison marks every
+ * attestation as revoked. This accepts either form and prefers the indexer's
+ * `revoked` flag when it was selected.
+ *
+ * @param attestation Attestation with `revoked` and/or `revocationTime`
+ * @returns True if the attestation is revoked
+ */
+export function isAttestationRevoked(attestation: {
+  revoked?: boolean | null;
+  revocationTime?: number | string | null;
+}): boolean {
+  if (typeof attestation.revoked === 'boolean') {
+    return attestation.revoked;
+  }
+  const revocationTime = Number(attestation.revocationTime ?? 0);
+  return Number.isFinite(revocationTime) && revocationTime > 0;
 }
 
 // Get schema UID from config or environment
@@ -56,6 +79,13 @@ const SCHEMA_STRING = "uint256 eventTimestamp,string srs,string locationType,str
 
 export class EasService {
   private dbService: DbService;
+  /** Page size for revocation queries; keeps EAS responses well under ~100 KB */
+  static readonly REVOCATION_PAGE_SIZE = 100;
+  /** Upper bound on revoked-attestation pages scanned per chain per run */
+  static readonly MAX_REVOCATION_PAGES = 200;
+  /** Timeout for a single revocation GraphQL query */
+  static readonly QUERY_TIMEOUT_MS = 30000;
+
   private graphqlClients: Record<string, ApolloClient<unknown>>;
   private lastProcessedTimestamps: Record<string, number>;
   private schemaEncoder: SchemaEncoder;
@@ -80,6 +110,7 @@ export class EasService {
         attester
         recipient
         revocationTime
+        revoked
         timeCreated
         data
         decodedDataJson
@@ -245,6 +276,7 @@ export class EasService {
               attester
               recipient
               revocationTime
+              revoked
               timeCreated
               data
               decodedDataJson
@@ -513,7 +545,7 @@ export class EasService {
       }
       
       // Check if attestation is revoked
-      const revoked = attestation.revocationTime !== "0";
+      const revoked = isAttestationRevoked(attestation);
       
       // Create the location proof
       const proof: LocationProof = {
@@ -672,6 +704,94 @@ export class EasService {
   }
 
   /**
+   * Get the GraphQL client for a chain, or throw if the chain is unsupported or
+   * has no endpoint configured.
+   *
+   * Revocation reconciliation must not mistake "could not ask EAS" for "EAS
+   * says nothing is revoked", so these lookups throw instead of returning [].
+   *
+   * @param chain The chain name
+   * @returns The chain's Apollo client
+   */
+  private requireGraphQLClient(chain: string): ApolloClient<unknown> {
+    if (!this.isSupportedChain(chain)) {
+      throw new Error(`Chain ${chain} is not supported`);
+    }
+    const client = this.graphqlClients[chain];
+    if (!client) {
+      throw new Error(`No GraphQL client available for ${chain}`);
+    }
+    return client;
+  }
+
+  /**
+   * Run an Apollo query with a timeout so a hung indexer cannot stall a
+   * serverless invocation.
+   */
+  private async queryWithTimeout<T>(
+    client: ApolloClient<unknown>,
+    options: { query: ReturnType<typeof gql>; variables: Record<string, unknown> },
+    chain: string
+  ): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`GraphQL query timed out after ${EasService.QUERY_TIMEOUT_MS / 1000}s for chain ${chain}`)),
+        EasService.QUERY_TIMEOUT_MS
+      );
+    });
+    try {
+      const response = await Promise.race([
+        client.query({ ...options, fetchPolicy: 'network-only' }),
+        timeout,
+      ]);
+      return response.data as T;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Look up the revocation status of specific attestations by UID.
+   *
+   * The lookup is by UID only (not schema), so it is safe for confirming the
+   * status of rows ingested under any schema.
+   *
+   * @param chain The chain to query
+   * @param uids Attestation UIDs to look up
+   * @returns Map of UID to revoked status; UIDs EAS does not know are absent
+   * @throws If the chain is unsupported or the query fails
+   */
+  async getRevocationStatuses(chain: string, uids: string[]): Promise<Map<string, boolean>> {
+    const client = this.requireGraphQLClient(chain);
+    const statuses = new Map<string, boolean>();
+
+    const query = gql`
+      query RevocationStatuses($uids: [String!]!) {
+        attestations(where: { id: { in: $uids } }) {
+          id
+          revoked
+          revocationTime
+        }
+      }
+    `;
+
+    for (let i = 0; i < uids.length; i += EasService.REVOCATION_PAGE_SIZE) {
+      const batch = uids.slice(i, i + EasService.REVOCATION_PAGE_SIZE);
+      const data = await this.queryWithTimeout<{ attestations: EASAttestation[] }>(
+        client,
+        { query, variables: { uids: batch } },
+        chain
+      );
+      for (const attestation of data.attestations) {
+        statuses.set(attestation.id, isAttestationRevoked(attestation));
+      }
+    }
+
+    return statuses;
+  }
+
+  /**
    * Check revocation status for a list of attestations
    * 
    * @param chain The chain to check revocation on
@@ -679,52 +799,85 @@ export class EasService {
    * @returns Array of UIDs that have been revoked
    */
   async checkRevocationStatus(chain: string, uids: string[]): Promise<string[]> {
-    if (!this.isSupportedChain(chain)) {
-      throw new Error(`Chain ${chain} is not supported`);
-    }
-
-    // Check if we have a GraphQL client for this chain
-    const client = this.graphqlClients[chain];
-    if (!client) {
-      logger.warn(`No GraphQL client available for ${chain}, cannot check revocation status`);
-      return [];
-    }
-
     if (uids.length === 0) {
+      this.requireGraphQLClient(chain);
       return [];
     }
 
     try {
-      // Create a GraphQL query to get revocation status for UIDs
-      const query = gql`
-        query CheckRevocation($uids: [String!]!) {
-          attestations(where: { id: { in: $uids } }) {
-            id
-            revocationTime
-          }
-        }
-      `;
-
-      // Execute the query
-      const response = await client.query({
-        query,
-        variables: {
-          uids
-        },
-        fetchPolicy: 'network-only' // Skip cache to get fresh data
-      });
-
-      // Extract revoked attestations (revocationTime != "0")
-      const revokedUids = response.data.attestations
-        .filter((att: { id: string; revocationTime: string }) => att.revocationTime !== "0")
-        .map((att: { id: string }) => att.id);
-
+      const statuses = await this.getRevocationStatuses(chain, uids);
+      const revokedUids = uids.filter(uid => statuses.get(uid) === true);
       logger.info(`Found ${revokedUids.length} revoked attestations out of ${uids.length} checked on ${chain}`);
       return revokedUids;
     } catch (error) {
       logger.error(`Error checking revocation status on chain ${chain}`, error);
       throw error;
     }
+  }
+
+  /**
+   * Fetch the UIDs of every revoked attestation for the chain's schema.
+   *
+   * Pages through EAS with a cursor ordered by (revocationTime, id). EAS
+   * revocations are permanent, so this full set is the source of truth for
+   * which stored proofs should be flagged revoked.
+   *
+   * @param chain The chain to query
+   * @returns UIDs of all revoked attestations for the configured schema
+   * @throws If the chain is unsupported, has no endpoint, or any page fails
+   */
+  async fetchRevokedAttestationUids(chain: string): Promise<string[]> {
+    const client = this.requireGraphQLClient(chain);
+    const schemaId = this.chainConfigs[chain as keyof typeof CHAIN_CONFIG].schemaUID;
+    const take = EasService.REVOCATION_PAGE_SIZE;
+
+    const firstPageQuery = gql`
+      query RevokedAttestations($schemaId: String!, $take: Int!) {
+        attestations(
+          where: { schemaId: { equals: $schemaId }, revoked: { equals: true } }
+          orderBy: [{ revocationTime: asc }, { id: asc }]
+          take: $take
+        ) {
+          id
+        }
+      }
+    `;
+    const nextPageQuery = gql`
+      query RevokedAttestationsAfter($schemaId: String!, $take: Int!, $cursor: String!) {
+        attestations(
+          where: { schemaId: { equals: $schemaId }, revoked: { equals: true } }
+          orderBy: [{ revocationTime: asc }, { id: asc }]
+          take: $take
+          skip: 1
+          cursor: { id: $cursor }
+        ) {
+          id
+        }
+      }
+    `;
+
+    const uids: string[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < EasService.MAX_REVOCATION_PAGES; page++) {
+      const data: { attestations: Array<{ id: string }> } = await this.queryWithTimeout(
+        client,
+        cursor
+          ? { query: nextPageQuery, variables: { schemaId, take, cursor } }
+          : { query: firstPageQuery, variables: { schemaId, take } },
+        chain
+      );
+      const pageUids = data.attestations.map(attestation => attestation.id);
+      uids.push(...pageUids);
+      if (pageUids.length < take) {
+        logger.info(`Found ${uids.length} revoked attestations for schema ${schemaId} on ${chain}`);
+        return uids;
+      }
+      cursor = pageUids[pageUids.length - 1];
+    }
+
+    throw new Error(
+      `Revoked attestation scan for ${chain} exceeded ${EasService.MAX_REVOCATION_PAGES} pages; refusing to reconcile on a partial result`
+    );
   }
 
   /**

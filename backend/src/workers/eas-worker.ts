@@ -29,6 +29,8 @@ interface WorkerStats {
     lastRun: Date | null;
     checkedCount: number;
     revokedCount: number;
+    /** Proofs whose revoked flag was cleared because EAS says they are not revoked */
+    restoredCount: number;
   };
   isRunning: boolean;
   isRevocationCheckRunning: boolean;
@@ -90,7 +92,8 @@ export class EasWorker {
       revocationChecks: {
         lastRun: null,
         checkedCount: 0,
-        revokedCount: 0
+        revokedCount: 0,
+        restoredCount: 0
       },
       isRunning: false,
       isRevocationCheckRunning: false
@@ -191,7 +194,22 @@ export class EasWorker {
       }
     };
     
-    // 5. Fallback for batchUpdateRevocations
+    // 5. Fallback for getRevokedLocationProofUids
+    const originalGetRevokedUids = this.dbService.getRevokedLocationProofUids;
+    this.dbService.getRevokedLocationProofUids = async (chain: string) => {
+      try {
+        return await originalGetRevokedUids.call(this.dbService, chain);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn(`DbService getRevokedLocationProofUids failed, falling back to Supabase: ${message}`);
+        if (supabaseService && supabaseService.isAvailable()) {
+          return await supabaseService.getRevokedLocationProofUids(chain);
+        }
+        throw error;
+      }
+    };
+
+    // 6. Fallback for batchUpdateRevocations
     const originalBatchUpdateRevocations = this.dbService.batchUpdateRevocations;
     this.dbService.batchUpdateRevocations = async (uids: string[], revoked: boolean = true) => {
       try {
@@ -357,7 +375,20 @@ export class EasWorker {
   }
   
   /**
-   * Check for revocations of existing attestations
+   * Reconcile stored revocation flags with EAS for every chain.
+   *
+   * For each chain:
+   * 1. Fetch the UIDs of every revoked attestation for the chain's schema from
+   *    EAS. Revocations are permanent, so this set is authoritative.
+   * 2. Flag stored proofs in that set that are not yet flagged revoked.
+   * 3. For stored proofs flagged revoked but not in that set, confirm by UID
+   *    with EAS and clear the flag only when EAS reports them as not revoked.
+   *    This repairs rows ingested while revocationTime was compared as a
+   *    string (which flagged every proof revoked) and leaves rows EAS does not
+   *    know about untouched.
+   *
+   * Cost scales with the number of revoked attestations, not stored proofs.
+   * If any EAS or database read fails, the chain is skipped for this run.
    */
   async checkRevocations(): Promise<void> {
     if (this.isRevocationCheckRunning) {
@@ -370,56 +401,35 @@ export class EasWorker {
       const chains = Object.keys(this.easService.getGraphQLClients());
       let totalChecked = 0;
       let totalRevoked = 0;
+      let totalRestored = 0;
       for (const chain of chains) {
         try {
-          // Get active attestations for this chain (not already revoked)
-          // Use limit of 100 at a time to avoid overloading the system
-          let attestations;
-          
-          try {
-            attestations = await this.dbService.getActiveLocationProofs(chain, 100);
-          } catch (dbError) {
-            logger.error(`Error getting active location proofs from DbService for chain ${chain}:`, dbError);
-            
-            // Don't try to fallback to Supabase here since we're getting the same error
-            logger.info(`Skipping revocation check for chain ${chain} due to database error`);
-            continue;
+          const easRevoked = await this.easService.fetchRevokedAttestationUids(chain);
+          const storedRevoked = await this.dbService.getRevokedLocationProofUids(chain);
+
+          const easRevokedSet = new Set(easRevoked);
+          const storedRevokedSet = new Set(storedRevoked);
+
+          const toRevoke = easRevoked.filter(uid => !storedRevokedSet.has(uid));
+          const restoreCandidates = storedRevoked.filter(uid => !easRevokedSet.has(uid));
+
+          let toRestore: string[] = [];
+          if (restoreCandidates.length > 0) {
+            const statuses = await this.easService.getRevocationStatuses(chain, restoreCandidates);
+            toRestore = restoreCandidates.filter(uid => statuses.get(uid) === false);
           }
-          
-          if (!attestations || attestations.length === 0) {
-            logger.debug(`No active attestations to check for chain ${chain}`);
-            continue;
-          }
-          
-          logger.info(`Checking revocation status for ${attestations.length} attestations on ${chain}`);
-          
-          // Extract UIDs
-          const uids = attestations.map(a => a.uid);
-          totalChecked += uids.length;
-          
-          // Check revocation status on-chain
-          const revokedUids = await this.easService.checkRevocationStatus(chain, uids);
-          
-          if (revokedUids.length > 0) {
-            logger.info(`Found ${revokedUids.length} revoked attestations on ${chain}`);
-            
-            // Update revocation status in the database, with error handling
-            try {
-              // Try Supabase first if available
-              if (supabaseService && supabaseService.isAvailable()) {
-                await supabaseService.batchUpdateRevocations(revokedUids, true);
-              } else {
-                // Fall back to DB service
-                await this.dbService.batchUpdateRevocations(revokedUids, true);
-              }
-              
-              totalRevoked += revokedUids.length;
-            } catch (updateError) {
-              logger.error(`Failed to update revocation status for chain ${chain}:`, updateError);
-            }
-          } else {
-            logger.debug(`No revoked attestations found on ${chain}`);
-          }
+
+          totalChecked += easRevoked.length + restoreCandidates.length;
+
+          const revoked = await this.applyRevocationUpdates(toRevoke, true);
+          const restored = await this.applyRevocationUpdates(toRestore, false);
+          totalRevoked += revoked;
+          totalRestored += restored;
+
+          logger.info(
+            `Revocations on ${chain}: ${easRevoked.length} revoked on EAS, ` +
+            `${revoked} newly flagged, ${restored} wrongly flagged rows cleared`
+          );
         } catch (error) {
           await this.recordError(`Error checking revocations for chain ${chain}`, error, chain);
           logger.error(`Error checking revocations for chain ${chain}`, error);
@@ -430,7 +440,11 @@ export class EasWorker {
       this.stats.revocationChecks.lastRun = new Date();
       this.stats.revocationChecks.checkedCount += totalChecked;
       this.stats.revocationChecks.revokedCount += totalRevoked;
-      logger.info(`Revocation check complete. Checked ${totalChecked} attestations, found ${totalRevoked} revoked`);
+      this.stats.revocationChecks.restoredCount += totalRestored;
+      logger.info(
+        `Revocation check complete. Checked ${totalChecked} attestations, ` +
+        `flagged ${totalRevoked} revoked, cleared ${totalRestored}`
+      );
     } catch (error) {
       await this.recordError('Revocation check failed', error);
       logger.error('Error during revocation check', error);
@@ -438,6 +452,25 @@ export class EasWorker {
       this.isRevocationCheckRunning = false;
       await this.upsertWorkerStats();
     }
+  }
+
+  /**
+   * Set the revoked flag on stored proofs in batches.
+   *
+   * @param uids Proof UIDs to update
+   * @param revoked The value to set
+   * @returns Number of rows updated
+   */
+  private async applyRevocationUpdates(uids: string[], revoked: boolean): Promise<number> {
+    const batchSize = 200;
+    let updated = 0;
+    for (let i = 0; i < uids.length; i += batchSize) {
+      const batch = uids.slice(i, i + batchSize);
+      updated += supabaseService && supabaseService.isAvailable()
+        ? await supabaseService.batchUpdateRevocations(batch, revoked)
+        : await this.dbService.batchUpdateRevocations(batch, revoked);
+    }
+    return updated;
   }
 
   /**
@@ -540,7 +573,9 @@ export class EasWorker {
             revocationChecks: {
               lastRun: data.revocation_last_run ? new Date(data.revocation_last_run) : null,
               checkedCount: data.revocation_checked_count || 0,
-              revokedCount: data.revocation_revoked_count || 0
+              revokedCount: data.revocation_revoked_count || 0,
+              // Not a worker_stats column; recorded per run in sync_history.stats
+              restoredCount: 0
             },
             isRunning: data.is_running || false,
             isRevocationCheckRunning: data.is_revocation_check_running || false

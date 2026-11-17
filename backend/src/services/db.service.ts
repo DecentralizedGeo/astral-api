@@ -243,6 +243,23 @@ export class DbService {
   }
 
   /**
+   * Get the UIDs of all location proofs currently flagged revoked on a chain.
+   *
+   * Throws on database errors (rather than returning []) so revocation
+   * reconciliation never acts on a partial view.
+   *
+   * @param chain The chain to filter by
+   * @returns UIDs with revoked = TRUE
+   */
+  async getRevokedLocationProofUids(chain: string): Promise<string[]> {
+    const result = await this.pool.query(
+      'SELECT uid FROM location_proofs WHERE chain = $1 AND revoked = TRUE',
+      [chain]
+    );
+    return result.rows.map((row: { uid: string }) => row.uid);
+  }
+
+  /**
    * Get active (non-revoked) location proofs for a specific chain
    * 
    * @param chain The chain to filter by

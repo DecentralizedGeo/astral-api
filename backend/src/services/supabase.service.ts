@@ -315,18 +315,57 @@ class SupabaseService {
     try {
       const { error, count } = await client
         .from(this.TABLE_NAME)
-        .update({ revoked, updated_at: new Date().toISOString() })
+        // count: 'exact' makes PostgREST return the affected row count;
+        // without it `count` is always null and this reported 0.
+        .update({ revoked, updated_at: new Date().toISOString() }, { count: 'exact' })
         .in('uid', uids);
-      
+
       if (error) {
         logger.error('Error batch updating revocations:', error);
         return 0;
       }
-      
+
       return count || 0;
     } catch (error) {
       logger.error('Exception batch updating revocations:', error);
       return 0;
+    }
+  }
+
+  /**
+   * Get the UIDs of all location proofs currently flagged revoked on a chain.
+   *
+   * Pages through results (PostgREST caps responses at 1000 rows) and throws on
+   * errors so revocation reconciliation never acts on a partial view.
+   *
+   * @param chain The chain to filter by
+   * @returns UIDs with revoked = true
+   */
+  async getRevokedLocationProofUids(chain: string): Promise<string[]> {
+    const client = this.getClient();
+    if (!client) {
+      throw new Error('Supabase client not available');
+    }
+
+    const pageSize = 1000;
+    const uids: string[] = [];
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await client
+        .from(this.TABLE_NAME)
+        .select('uid')
+        .eq('chain', chain)
+        .eq('revoked', true)
+        .order('uid', { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        throw new Error(`Error fetching revoked location proofs for ${chain}: ${error.message}`);
+      }
+      const rows = (data || []) as Array<{ uid: string }>;
+      uids.push(...rows.map(row => row.uid));
+      if (rows.length < pageSize) {
+        return uids;
+      }
     }
   }
 
