@@ -4,6 +4,10 @@
 **Scope:** astral-api (`main` @ `cf3f342`), astral-sdk (`main` @ `9fdf311`, v0.2.0), Location Protocol spec (live site = `v0.2.0-rc.1`), and live EAS GraphQL indexers.
 **Related issues:** astral-api#13; astral-sdk #40, #26, #45, #42.
 
+> **Update (2026-11-17, later the same day).** The stabilization work this report recommends as a first step has since been done on branch `fix/stabilization`, tracked in [#19](https://github.com/DecentralizedGeo/astral-api/issues/19). The affected parts of [Finding 2](#finding-2--how-deep-the-coupling-goes-in-astral-api) and of [Problems found along the way](#problems-found-along-the-way) are marked **Fixed on `fix/stabilization`** below; the original text is kept so the line references still make sense against `main` @ `cf3f342`. The decision this report leads to is recorded in [ADR 0001](../adr/0001-schema-agnostic-ingestion.md), and the spec questions are drafted in [`docs/drafts/location-protocol-spec-issue-compliance-questions.md`](../drafts/location-protocol-spec-issue-compliance-questions.md).
+>
+> One correction: `0xde87be8a…ba81` is registered on **10** chains (Ethereum, Sepolia, Base, Base Sepolia, Optimism, Optimism Sepolia, Arbitrum, Celo, Scroll, Ink), not 9.
+
 **Method:** Three agents ran in parallel: one on the API code, one on the SDK code and its issues, and one on the spec plus live EAS queries. I re-checked their key claims against the source and the live spec.
 
 ---
@@ -49,6 +53,7 @@ Points that affect the design:
 
 - `backend/src/services/eas.service.ts:37-62` has one global `schemaUID` (env var, falling back to the literal `0xba4171…`). It is copied into a 4-chain `CHAIN_CONFIG`.
 - `eas.service.ts:65` hard-codes the legacy `SCHEMA_STRING`.
+- **Fixed on `fix/stabilization` ([#19](https://github.com/DecentralizedGeo/astral-api/issues/19), item 2):** the RPC providers, EAS clients and the RPC URLs carrying the Infura key were dead code and have been removed from `CHAIN_CONFIG`. The single global schema UID and the hard-coded chain lists are unchanged; they are what the redesign replaces.
 - `config/index.ts` has one env var per chain plus one `EAS_SCHEMA_UID`.
 - `config/EAS-config.json` is dead: nothing imports it.
 - Chain lists are hard-coded again in:
@@ -66,6 +71,12 @@ Points that affect the design:
 - **Cursor:** `MAX(timestamp) WHERE chain=$1` from `location_proofs`, keyed per chain. There is no sync-state table.
   - **Consequence:** add a second schema on a chain that already has rows, and its history is skipped, because its cursor starts at the chain's latest timestamp.
 
+> **Fixed on `fix/stabilization` ([#19](https://github.com/DecentralizedGeo/astral-api/issues/19), item 7): pagination and page-boundary drops.** `processChain` now pages with a `(timeCreated, id)` keyset cursor, ordered `[timeCreated asc, id asc]`, 30 attestations per page, until it catches up or spends `INGEST_TIME_BUDGET_MS` (default 8 s). Same-second records are no longer dropped at page boundaries, and backlogs drain across runs.
+>
+> **Still open, and the redesign's job:** the cursor is still per chain, held in memory, and rebuilt on cold start from `MAX(timestamp)` across all of a chain's rows. So the "second schema skips its history" consequence above still holds. [ADR 0001](../adr/0001-schema-agnostic-ingestion.md) replaces it with a persisted cursor per (chain, schema).
+>
+> **Found during that work:** 133 of 556 legacy-schema attestations on Base (and 2 of 41 on Base Sepolia) have an empty `decodedDataJson`, because EAS cannot decode their data against the schema. `fix/stabilization` skips them with a warning. ADR 0001 stores them with `validation_status = 'undecodable'` instead.
+
 ### Decoder
 
 - `convertAttestationToLocationProof` (`eas.service.ts:317-561`) reads the indexer's `decodedDataJson` and looks fields up **by name**. That part is good news.
@@ -80,6 +91,7 @@ Points that affect the design:
 
 - `location_proofs` columns are the legacy schema's fields (`recipe_types`, `media_types`, `memo`, `event_timestamp NOT NULL`).
 - There is no `schema_uid`, `spec_version`, raw decoded payload or validation status.
+- **Fixed on `fix/stabilization` ([#19](https://github.com/DecentralizedGeo/astral-api/issues/19), item 3):** migration `004_geometry_from_coordinates.sql` adds a trigger that derives `geometry` from `longitude`/`latitude` on every write path, plus a backfill. Full geometry (polygons, lines) is still not stored; the decoder keeps only the first coordinate.
 - The primary key is `uid` alone. Making the key `(chain, uid)` is safer once there are many schemas and chains.
 
 ### Read APIs
@@ -91,14 +103,18 @@ Points that affect the design:
 
 These are independent of the redesign but should be fixed first.
 
-| # | Problem | Evidence | Impact |
-|---|---|---|---|
-| 1 | **The scheduled sync probably never runs.** Vercel cron sends `GET`, but the handler only accepts `POST`. | `cron/sync.ts:12-14`, `routes/index.ts:20`, `vercel.json:50-55` | Ingestion may only happen on manual triggers. Check the Vercel logs. |
-| 2 | **An Infura API key is committed in source.** | `eas.service.ts:43-58` | **Rotate the key**, and move it to an env var (the RPC clients are vestigial anyway). |
-| 3 | **Geometry is likely NULL in production.** The Supabase insert path writes no geometry, and no trigger fills it. | `supabase.service.ts:61-86` | bbox and spatial queries miss rows ingested through Supabase. |
-| 4 | **The sync endpoints are unauthenticated.** | `sync.routes.ts`, no `CRON_SECRET` | A public "rescan" endpoint would be open to abuse. |
-| 5 | **The only EAS test does not compile.** | `services/__tests__/eas.service.test.ts` (calls a removed method) | Effectively zero coverage of ingestion and decoding. |
-| 6 | **Revocation checks are disabled and shallow.** | `cron/sync.ts:60-71` (commit `74fbb0a`) | Revoked attestations stay "valid". |
+> **Status:** all six are fixed in code on `fix/stabilization`, tracked in [#19](https://github.com/DecentralizedGeo/astral-api/issues/19). That branch is built on PR #12's `api-fix` branch and has no PR yet. Some operational steps are still open; they are listed in the Status column and in #19's acceptance criteria.
+
+| # | Problem | Evidence | Impact | Status |
+|---|---|---|---|---|
+| 1 | **The scheduled sync probably never runs.** Vercel cron sends `GET`, but the handler only accepts `POST`. | `cron/sync.ts:12-14`, `routes/index.ts:20`, `vercel.json:50-55` | Ingestion may only happen on manual triggers. Check the Vercel logs. | **Fixed on `fix/stabilization`** (#19 item 1). The cron route accepts `GET` and `POST` and requires `Authorization: Bearer` with `CRON_SECRET` or `SYNC_ADMIN_TOKEN`. Still to do: set `CRON_SECRET` in Vercel and check the logs. |
+| 2 | **An Infura API key is committed in source.** | `eas.service.ts:43-58` | **Rotate the key**, and move it to an env var (the RPC clients are vestigial anyway). | **Removed from code on `fix/stabilization`** (#19 item 2), together with the unused RPC clients. Still to do: **rotate the key**, which remains in git history. |
+| 3 | **Geometry is likely NULL in production.** The Supabase insert path writes no geometry, and no trigger fills it. | `supabase.service.ts:61-86` | bbox and spatial queries miss rows ingested through Supabase. | **Fixed on `fix/stabilization`** (#19 item 3). Migration `004` adds a geometry trigger and a backfill. Still to do: run it on production. |
+| 4 | **The sync endpoints are unauthenticated.** | `sync.routes.ts`, no `CRON_SECRET` | A public "rescan" endpoint would be open to abuse. | **Fixed on `fix/stabilization`** (#19 item 4). The new `requireBearerToken` middleware guards the mutating sync routes with `SYNC_ADMIN_TOKEN` and fails closed. The rescan endpoint in ADR 0001 reuses it. |
+| 5 | **The only EAS test does not compile.** | `services/__tests__/eas.service.test.ts` (calls a removed method) | Effectively zero coverage of ingestion and decoding. | **Fixed on `api-fix` (PR #12)**, which moved the tests to `backend/tests/eas/`. `fix/stabilization` adds ingestion, pagination and revocation tests; 152 tests pass. Decoding of non-legacy schemas is still untested. |
+| 6 | **Revocation checks are disabled and shallow.** | `cron/sync.ts:60-71` (commit `74fbb0a`) | Revoked attestations stay "valid". | **Fixed on `fix/stabilization`** (#19 item 6). Revocation checks are re-enabled and reconcile stored flags against the full revoked set in EAS. They also fixed a worse bug: **every proof was stored as revoked**, because EAS returns `revocationTime` as an Int and the code compared it with the string `"0"`. |
+
+`fix/stabilization` also fixed an inverted `DISABLE_SYNC_TRIGGER` toggle introduced on `api-fix` (#19 item 5).
 
 ### Depth of change by layer
 
@@ -254,7 +270,7 @@ Read schema registrations from the chain over RPC instead of easscan.
 
 ## Suggested next steps
 
-1. **Stabilize the API first** (one PR, independent of the redesign):
+1. **Stabilize the API first** (one PR, independent of the redesign). **Done in code on `fix/stabilization` ([#19](https://github.com/DecentralizedGeo/astral-api/issues/19)); key rotation, secrets and the production migration are still open there.**
    - Accept `GET` with a `CRON_SECRET` on the cron route.
    - Rotate the committed Infura key.
    - Write geometry on the Supabase path.
@@ -268,8 +284,8 @@ Read schema registrations from the chain over RPC instead of easscan.
    - Is bare `geojson` an accepted alias for `location_type`?
    - Should the deprecated `EPSG:4326` short form of `srs` be normalized?
 
-   The compliance tiers depend on these answers.
-3. **Write an ADR** for options B + D, and update or close astral-api#13 against it.
+   The compliance tiers depend on these answers. **Drafted, not posted:** [`docs/drafts/location-protocol-spec-issue-compliance-questions.md`](../drafts/location-protocol-spec-issue-compliance-questions.md).
+3. **Write an ADR** for options B + D, and update or close astral-api#13 against it. **Done:** [ADR 0001](../adr/0001-schema-agnostic-ingestion.md) (proposed).
 4. **Build the shared compliance module (D):** a parser, a tier classifier and a v0.1/legacy → v0.2 normalizer. Write unit tests against the 52 real schema strings from this research (`eas-research/classified.tsv`, linked under Artifacts below).
 5. **Migration:** `schemas` + `sync_state` tables; new columns on `location_proofs`; backfill existing rows with `0xba4171`.
 6. **Schema discovery service** + `POST /api/admin/schemas/rescan` (manual for now) + `GET /api/v0/schemas`.
@@ -289,10 +305,10 @@ Read schema registrations from the chain over RPC instead of easscan.
     This finishes #40 and #26.
 11. **Later:** a scheduled rescan via cron (Vercel's Hobby plan only allows daily crons, which is fine for schemas; attestation sync needs a paid plan or an external scheduler), automatic approval by tier, and the option of onchain discovery (E).
 
-### Artifacts from this research (session scratchpad, not durable)
+### Artifacts from this research
 
-- Candidate schemas across chains, classified: `/tmp/claude-1000/-home-danny-Projects-astral-api/8cf2ae50-ee3f-4775-9245-edad925aceec/scratchpad/eas-research/classified.tsv`
-- Crawl, classifier and value-sampling scripts: same directory (`crawl.mjs`, `classify.mjs`, `values.mjs`)
-- SDK clone that was analyzed: `/tmp/claude-1000/-home-danny-Projects-astral-api/8cf2ae50-ee3f-4775-9245-edad925aceec/scratchpad/astral-sdk`
+These are now in the repo:
 
-Copy `classified.tsv` into the repo before the scratchpad is cleared if you want it as test fixtures.
+- Candidate schemas, classified: [`backend/tests/fixtures/eas-schemas/classified.tsv`](../../backend/tests/fixtures/eas-schemas/classified.tsv). The raw candidate responses for all 16 chains, with creator, resolver and revocable, are in [`candidates/`](../../backend/tests/fixtures/eas-schemas/candidates/). See the [fixtures README](../../backend/tests/fixtures/eas-schemas/README.md).
+- Crawl, classifier and value-sampling scripts, with their output: [`docs/research/2026-11-17-eas-crawl/`](2026-11-17-eas-crawl/).
+- The analysis used astral-sdk `main` @ `9fdf311`, which was still its latest commit on 2026-11-17.
