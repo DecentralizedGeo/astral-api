@@ -293,7 +293,7 @@ function parseLocationProof(proof) {
 
 **Solutions:**
 - Check sync status for specific chains
-- Trigger a manual sync: `POST /api/sync?chain=sepolia`
+- Trigger a manual sync: `POST /api/sync?chain=sepolia` with `Authorization: Bearer <SYNC_ADMIN_TOKEN>`
 - Wait for the next automatic sync cycle
 
 ### 2. Revoked Attestations
@@ -326,7 +326,8 @@ function parseLocationProof(proof) {
 
 **Solutions:**
 - Check sync status: `GET /api/sync/status`
-- Manually trigger a sync: `POST /api/cron/sync`
+- Manually trigger a sync: `GET` or `POST /api/cron/sync` with `Authorization: Bearer <CRON_SECRET or SYNC_ADMIN_TOKEN>`
+- A `401` means a missing or wrong token; a `503` means `CRON_SECRET`/`SYNC_ADMIN_TOKEN` is not set on the deployment
 - Test endpoint availability: `GET /api/cron/sync/test`
 - Wait for the automatic sync (runs every minute)
 

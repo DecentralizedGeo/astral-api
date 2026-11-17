@@ -71,7 +71,9 @@ Follow these steps to deploy the Astral API backend to Vercel:
 1. After your initial deployment is successful, go to your project settings
 2. In the left sidebar, find "Cron Jobs" and click on it
 3. Vercel will automatically detect the cron job in your vercel.json file
-4. Make sure the cron job is enabled: `/api/cron/sync` with schedule `*/15 * * * *`
+4. Make sure the cron job is enabled: `/api/cron/sync` with the schedule from `vercel.json`
+5. Set the `CRON_SECRET` environment variable (at least 16 characters, e.g. `openssl rand -hex 32`). Vercel Cron calls the path with `GET` and `Authorization: Bearer $CRON_SECRET`; without it the route answers `503` and no sync runs.
+6. Set `SYNC_ADMIN_TOKEN` (at least 16 characters) to use the manual sync endpoints.
 
 ## Step 4: Test Your Deployment
 
@@ -79,7 +81,7 @@ Follow these steps to deploy the Astral API backend to Vercel:
    - `https://api.astral.global/health` (should return status: "ok")
    - `https://api.astral.global/api/v0/config` (should return configuration)
 
-2. To manually trigger a sync, make a POST request to:
+2. To manually trigger a sync, make a POST request with `Authorization: Bearer <SYNC_ADMIN_TOKEN>` to:
    - `https://api.astral.global/api/sync`
 
 3. To check the sync status, make a GET request to:

@@ -4,6 +4,12 @@ import { z } from 'zod';
 // Load environment variables
 dotenv.config();
 
+// An optional secret of at least 16 characters; an empty string counts as unset
+const optionalSecret = z.preprocess(
+  value => (value === '' ? undefined : value),
+  z.string().min(16, 'must be at least 16 characters').optional()
+);
+
 // Define a schema for environment variables
 const envSchema = z.object({
   // Database (making it optional since we're using Supabase exclusively)
@@ -27,6 +33,14 @@ const envSchema = z.object({
   // EAS Schema UID
   EAS_SCHEMA_UID: z.string().optional(),
   EAS_SCHEMA_RAW_STRING: z.string().optional(),
+
+  // Endpoint auth (read per request by api/middleware/auth.ts; validated here).
+  // Routes guarded by a secret that is not set reject every request (503).
+  // CRON_SECRET: sent by Vercel Cron as `Authorization: Bearer <value>`.
+  // Empty values (e.g. `CRON_SECRET=` copied from .env.example) count as unset.
+  CRON_SECRET: optionalSecret,
+  // SYNC_ADMIN_TOKEN: required for POST /api/sync, /api/sync/revocations, /api/sync/worker.
+  SYNC_ADMIN_TOKEN: optionalSecret,
 });
 
 // Process.env is an object with string keys and possibly undefined values

@@ -3,16 +3,14 @@ import { EasWorker } from '../../workers/eas-worker';
 import { logger } from '../../utils/logger';
 
 /**
- * Cron handler for Vercel to trigger the EAS sync process
- * This endpoint is called automatically by Vercel's cron scheduler
- * Can be triggered manually with a POST request to /api/cron/sync
+ * Cron handler for Vercel to trigger the EAS sync process.
+ *
+ * Vercel Cron invokes the path with GET and `Authorization: Bearer $CRON_SECRET`.
+ * It can also be triggered manually with GET or POST and the same header (or
+ * the SYNC_ADMIN_TOKEN). Method and authentication are enforced by the router
+ * in `api/routes/index.ts`, not here.
  */
 export default async function handler(req: Request, res: Response) {
-  // Only allow POST requests from Vercel
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
   try {
     logger.info('Cron job triggered for EAS sync');
     

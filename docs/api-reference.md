@@ -248,6 +248,8 @@ POST /api/sync
 
 Triggers a synchronization of attestations from EAS for all chains or a specific chain.
 
+Requires `Authorization: Bearer <SYNC_ADMIN_TOKEN>` (see [Authentication](authentication.md)). Returns `404` when `DISABLE_SYNC_TRIGGER=true`.
+
 #### Query Parameters
 
 | Parameter | Type | Description |
@@ -338,6 +340,8 @@ POST /api/sync/revocations
 
 Triggers a check for revocations of existing attestations.
 
+Requires `Authorization: Bearer <SYNC_ADMIN_TOKEN>`.
+
 #### Response
 
 ```json
@@ -354,6 +358,8 @@ POST /api/sync/worker
 ```
 
 Controls the background worker that performs synchronization.
+
+Requires `Authorization: Bearer <SYNC_ADMIN_TOKEN>`.
 
 #### Query Parameters
 

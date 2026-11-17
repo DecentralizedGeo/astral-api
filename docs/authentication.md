@@ -24,14 +24,25 @@ Most endpoints in the Astral API are publicly accessible without authentication:
 
 ### Restricted Endpoints
 
-Some endpoints that trigger actions or control the system are currently restricted to serverless functions and cron triggers:
+Endpoints that trigger actions or control the system require a bearer token in the `Authorization` header:
 
-- `/api/sync` - Trigger synchronization of attestations
-- `/api/sync/status` - Get synchronization status
-- `/api/sync/revocations` - Trigger revocation checks
-- `/api/sync/worker` - Control the background worker
+| Endpoint | Methods | Accepted token |
+|----------|---------|----------------|
+| `/api/cron/sync` | `GET`, `POST` | `CRON_SECRET` or `SYNC_ADMIN_TOKEN` |
+| `/api/sync` | `POST` | `SYNC_ADMIN_TOKEN` |
+| `/api/sync/revocations` | `POST` | `SYNC_ADMIN_TOKEN` |
+| `/api/sync/worker` | `POST` | `SYNC_ADMIN_TOKEN` |
 
-These endpoints are protected through Vercel's internal mechanisms rather than API keys or tokens.
+`GET /api/sync/status` and `GET /api/cron/sync/test` are read-only and remain public.
+
+```bash
+curl -X POST -H "Authorization: Bearer $SYNC_ADMIN_TOKEN" "https://api.astral.global/api/sync?chain=sepolia"
+```
+
+- Both tokens are environment variables on the deployment and must be at least 16 characters (generate with `openssl rand -hex 32`).
+- Vercel Cron sends `Authorization: Bearer $CRON_SECRET` automatically when `CRON_SECRET` is set on the project.
+- The checks fail closed: if a route's token is not configured, the route responds `503` to every request. A missing or wrong token gets `401`.
+- Setting `DISABLE_SYNC_TRIGGER=true` removes `POST /api/sync` entirely.
 
 ## Planned Authentication Features
 
