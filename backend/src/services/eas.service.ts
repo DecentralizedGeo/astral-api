@@ -18,6 +18,13 @@ interface EASAttestation {
   decodedDataJson: string; // JSON string of decoded data (may be directly on attestation or in data property)
 }
 
+/** Keyset position in a chain's attestation stream, ordered by (timeCreated, id) */
+export interface IngestCursor {
+  timeCreated: number;
+  /** Last processed attestation UID at `timeCreated`; null to start at `timeCreated` inclusive */
+  id: string | null;
+}
+
 interface GraphQLQueryResponse {
   data: {
     attestations: EASAttestation[];
@@ -85,9 +92,27 @@ export class EasService {
   static readonly MAX_REVOCATION_PAGES = 200;
   /** Timeout for a single revocation GraphQL query */
   static readonly QUERY_TIMEOUT_MS = 30000;
+  /**
+   * Attestations per ingestion page. Responses include decodedDataJson, and EAS
+   * truncates responses over ~100 KB; 30 per page was reliable in testing.
+   */
+  static readonly INGEST_PAGE_SIZE = 30;
+  /** Default per-chain ingestion time budget per run */
+  static readonly DEFAULT_INGEST_TIME_BUDGET_MS = 8000;
+
+  /**
+   * Per-chain ingestion time budget, from INGEST_TIME_BUDGET_MS if set.
+   * Keep (budget x chains) under the serverless function's max duration.
+   */
+  static ingestTimeBudgetMs(): number {
+    const value = Number(process.env.INGEST_TIME_BUDGET_MS);
+    return Number.isFinite(value) && value > 0 ? value : EasService.DEFAULT_INGEST_TIME_BUDGET_MS;
+  }
 
   private graphqlClients: Record<string, ApolloClient<unknown>>;
   private lastProcessedTimestamps: Record<string, number>;
+  /** UID of the last processed attestation at lastProcessedTimestamps[chain] */
+  private lastProcessedIds: Record<string, string | null>;
   private schemaEncoder: SchemaEncoder;
   private chainConfigs: typeof CHAIN_CONFIG;
   
@@ -122,6 +147,7 @@ export class EasService {
     this.dbService = dbService;
     this.graphqlClients = {};
     this.lastProcessedTimestamps = {};
+    this.lastProcessedIds = {};
     this.schemaEncoder = new SchemaEncoder(SCHEMA_STRING);
     this.chainConfigs = CHAIN_CONFIG;
     
@@ -170,6 +196,9 @@ export class EasService {
     try {
       // For each chain that has a GraphQL client, get the latest timestamp from the database
       for (const chain of Object.keys(this.graphqlClients)) {
+        // Resume at the newest stored second, inclusive; already-stored
+        // attestations in that second are skipped by the existence check.
+        this.lastProcessedIds[chain] = null;
         try {
           // First try with dbService
           const result = await this.dbService.getLatestLocationProofTimestamp(chain);
@@ -591,89 +620,190 @@ export class EasService {
   }
   
   /**
-   * Process attestations for a single chain
+   * Fetch one page of attestations for the chain's schema after a keyset cursor.
+   *
+   * Results are ordered by (timeCreated, id). With a cursor id, the page starts
+   * strictly after (timeCreated, id), so attestations sharing a second are
+   * never skipped at a page boundary. Without an id (fresh start from a stored
+   * timestamp), the page starts at timeCreated inclusive; already-stored
+   * attestations are filtered out by the caller.
+   *
+   * @param chain The chain to query
+   * @param cursor Position to read after
+   * @param take Page size
+   * @returns The page of attestations
+   * @throws After retries, if the page cannot be fetched
+   */
+  async fetchAttestationPage(chain: string, cursor: IngestCursor, take: number): Promise<EASAttestation[]> {
+    const client = this.requireGraphQLClient(chain);
+    const schemaId = this.chainConfigs[chain as keyof typeof CHAIN_CONFIG].schemaUID;
+    // GraphQL Int is 32-bit signed
+    const timeCreated = Math.min(cursor.timeCreated, 2147483647);
+
+    const fields = `
+      id
+      attester
+      recipient
+      revocationTime
+      revoked
+      timeCreated
+      data
+      decodedDataJson
+    `;
+    const query = cursor.id
+      ? gql`
+          query AttestationPageAfter($schemaId: String!, $timeCreated: Int!, $id: String!, $take: Int!) {
+            attestations(
+              where: {
+                schemaId: { equals: $schemaId }
+                OR: [
+                  { timeCreated: { gt: $timeCreated } }
+                  { AND: [{ timeCreated: { equals: $timeCreated } }, { id: { gt: $id } }] }
+                ]
+              }
+              orderBy: [{ timeCreated: asc }, { id: asc }]
+              take: $take
+            ) { ${fields} }
+          }
+        `
+      : gql`
+          query AttestationPageFrom($schemaId: String!, $timeCreated: Int!, $take: Int!) {
+            attestations(
+              where: { schemaId: { equals: $schemaId }, timeCreated: { gte: $timeCreated } }
+              orderBy: [{ timeCreated: asc }, { id: asc }]
+              take: $take
+            ) { ${fields} }
+          }
+        `;
+    const variables = cursor.id
+      ? { schemaId, timeCreated, id: cursor.id, take }
+      : { schemaId, timeCreated, take };
+
+    const maxRetries = 3;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const data = await this.queryWithTimeout<{ attestations: EASAttestation[] }>(
+          client,
+          { query, variables },
+          chain
+        );
+        return data.attestations;
+      } catch (error) {
+        if (attempt >= maxRetries) {
+          logger.error(`Failed to fetch attestation page from ${chain} after ${maxRetries} attempts`);
+          throw error;
+        }
+        const backoffMs = Math.pow(2, attempt) * 1000;
+        logger.warn(`Error fetching attestation page from ${chain} (attempt ${attempt}/${maxRetries}), retrying in ${backoffMs}ms`, error);
+        await new Promise(resolve => setTimeout(resolve, backoffMs));
+      }
+    }
+  }
+
+  /**
+   * Store one attestation if it is not already stored.
+   *
+   * @returns 'stored', 'exists', or 'skipped' (conversion failed; logged)
+   * @throws If the existence check or the insert fails on every backend, so
+   *   the caller can stop without advancing past an unstored attestation
+   */
+  private async ingestAttestation(attestation: EASAttestation, chain: string): Promise<'stored' | 'exists' | 'skipped'> {
+    let exists: boolean;
+    try {
+      exists = await this.dbService.locationProofExists(attestation.id);
+    } catch (error) {
+      logger.warn(`DbService.locationProofExists failed, falling back to Supabase: ${(error as Error).message}`);
+      if (!(supabaseService && supabaseService.isAvailable())) throw error;
+      exists = await supabaseService.locationProofExists(attestation.id);
+    }
+    if (exists) {
+      return 'exists';
+    }
+
+    // EAS leaves decodedDataJson empty when the attestation's data does not
+    // decode against its schema (e.g. 133 of 556 legacy-schema attestations
+    // on Base). There is no payload to store.
+    if (!attestation.decodedDataJson) {
+      logger.warn(`Skipping attestation ${attestation.id} on ${chain}: EAS could not decode its data against the schema`);
+      return 'skipped';
+    }
+
+    let locationProof: LocationProof;
+    try {
+      locationProof = await this.convertAttestationToLocationProof(attestation, chain);
+    } catch (error) {
+      logger.error(`Skipping attestation ${attestation.id} on ${chain}: conversion failed`, error);
+      return 'skipped';
+    }
+
+    try {
+      await this.dbService.createLocationProof(locationProof);
+    } catch (error) {
+      logger.warn(`DbService.createLocationProof failed, falling back to Supabase: ${(error as Error).message}`);
+      if (!(supabaseService && supabaseService.isAvailable())) throw error;
+      await supabaseService.createLocationProof(locationProof);
+    }
+    return 'stored';
+  }
+
+  /**
+   * Ingest new attestations for a single chain.
+   *
+   * Pages through EAS with a (timeCreated, id) keyset cursor until it is caught
+   * up or the per-chain time budget is spent; the next run resumes from the
+   * database (newest stored timeCreated), so backlogs drain across runs. The
+   * cursor only advances past attestations that were stored, already present,
+   * or unconvertible, so a storage failure stops the chain without skipping
+   * anything.
+   *
+   * @param chain The chain to process
+   * @returns Number of newly stored attestations
+   * @throws If a page cannot be fetched or an attestation cannot be stored
    */
   async processChain(chain: string): Promise<number> {
-    try {
-      const timestamp = this.lastProcessedTimestamps[chain] || Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 7; // Default to 7 days ago
-      const schemaUID = this.chainConfigs[chain as keyof typeof CHAIN_CONFIG].schemaUID;
+    const take = EasService.INGEST_PAGE_SIZE;
+    const budgetMs = EasService.ingestTimeBudgetMs();
+    const startedAt = Date.now();
+    let cursor: IngestCursor = {
+      timeCreated: this.lastProcessedTimestamps[chain] || Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 7, // Default to 7 days ago
+      id: this.lastProcessedIds[chain] ?? null,
+    };
+    let stored = 0;
+    let seen = 0;
+    let pages = 0;
 
-      logger.info(`Fetching attestations for ${chain} since ${new Date(timestamp * 1000).toISOString()}`);
-      
-      // GraphQL Int is 32-bit signed integer (max: 2147483647), so we need to ensure the timestamp fits
-      const maxSafeInt = 2147483647;
-      // Use the smaller of our timestamp or maxSafeInt to avoid overflow
-      const safeTimestamp = Math.min(timestamp, maxSafeInt);
-      
-      // Query the EAS indexer via GraphQL
-      const attestations = await this.fetchAttestations(chain, 100, new Date(safeTimestamp * 1000).toISOString());
-      
-      if (attestations.length === 0) {
-        logger.info(`No attestations found for chain ${chain}`);
-        return 0;
-      }
-      
-      logger.info(`Processing ${attestations.length} attestations from ${chain}`);
-      
-      let processedCount = 0;
-      
-      // Process each attestation
-      for (const attestation of attestations) {
-        try {
-          // Check if we already have this attestation
-          let exists = false;
-          
-          try {
-            exists = await this.dbService.locationProofExists(attestation.id);
-          } catch (error) {
-            // Fall back to Supabase if DbService fails
-            logger.warn(`DbService.locationProofExists failed, falling back to Supabase: ${(error as Error).message}`);
-            if (supabaseService && supabaseService.isAvailable()) {
-              exists = await supabaseService.locationProofExists(attestation.id);
-            } else {
-              throw error; // Re-throw if no fallback available
-            }
-          }
-          
-          if (!exists) {
-            // Convert the attestation to a location proof
-            const locationProof = await this.convertAttestationToLocationProof(attestation, chain);
-            
-            // Store in database (try DbService first, fall back to Supabase)
-            try {
-              await this.dbService.createLocationProof(locationProof);
-            } catch (error) {
-              // Fall back to Supabase if DbService fails
-              logger.warn(`DbService.createLocationProof failed, falling back to Supabase: ${(error as Error).message}`);
-              if (supabaseService && supabaseService.isAvailable()) {
-                await supabaseService.createLocationProof(locationProof);
-              } else {
-                throw error; // Re-throw if no fallback available
-              }
-            }
-            
-            processedCount++;
-          } else {
-            logger.debug(`Attestation ${attestation.id} already exists in database`);
-          }
-        } catch (error) {
-          logger.error(`Error processing attestation ${attestation.id}`, error);
-          // Continue with next attestation
+    logger.info(`Fetching attestations for ${chain} from ${new Date(cursor.timeCreated * 1000).toISOString()}${cursor.id ? ` after ${cursor.id}` : ''}`);
+
+    try {
+      for (;;) {
+        if (pages > 0 && Date.now() - startedAt >= budgetMs) {
+          logger.info(`Ingestion time budget (${budgetMs}ms) reached for ${chain} after ${pages} pages; resuming next run`);
+          break;
+        }
+
+        const page = await this.fetchAttestationPage(chain, cursor, take);
+        pages++;
+
+        for (const attestation of page) {
+          const outcome = await this.ingestAttestation(attestation, chain);
+          if (outcome === 'stored') stored++;
+          seen++;
+          cursor = { timeCreated: parseInt(String(attestation.timeCreated), 10), id: attestation.id };
+          this.lastProcessedTimestamps[chain] = cursor.timeCreated;
+          this.lastProcessedIds[chain] = cursor.id;
+        }
+
+        if (page.length < take) {
+          break;
         }
       }
-      
-      // Update last processed timestamp if we got any attestations
-      if (attestations.length > 0) {
-        const lastAttestationTime = Math.max(...attestations.map(a => parseInt(a.timeCreated)));
-        this.lastProcessedTimestamps[chain] = lastAttestationTime;
-        logger.info(`Updated last timestamp for ${chain} to ${new Date(lastAttestationTime * 1000).toISOString()}`);
-      }
-      
-      return processedCount;
     } catch (error) {
-      logger.error(`Error processing chain ${chain}`, error);
+      logger.error(`Error processing chain ${chain} after storing ${stored} attestations; cursor left at last processed attestation`, error);
       throw error;
     }
+
+    logger.info(`Processed ${seen} attestations from ${chain} in ${pages} page(s): ${stored} new`);
+    return stored;
   }
   
   /**
