@@ -120,6 +120,32 @@ describe('EAS Service', () => {
     });
   });
 
+  describe('chain support', () => {
+      it('should create a GraphQL client for every configured chain', () => {
+          expect(Object.keys(easService.getGraphQLClients()).sort())
+              .toEqual(['arbitrum', 'base', 'celo', 'sepolia']);
+      });
+
+      it('should fetch attestations for a configured chain', async () => {
+          await expect(easService.fetchAttestations('base', 10)).resolves.toEqual([]);
+      });
+
+      it('should reject unconfigured chains when fetching attestations', async () => {
+          await expect(easService.fetchAttestations('optimism', 10))
+              .rejects.toThrow('Chain optimism is not supported');
+      });
+
+      it('should reject unconfigured chains when checking revocations', async () => {
+          await expect(easService.checkRevocationStatus('optimism', ['0x01']))
+              .rejects.toThrow('Chain optimism is not supported');
+      });
+
+      it('should not treat Object prototype keys as chains', async () => {
+          await expect(easService.fetchAttestations('toString', 10))
+              .rejects.toThrow('Chain toString is not supported');
+      });
+  });
+
   describe('processAllChains', () => {
       beforeEach(async () => {
           await easService.initialize();
