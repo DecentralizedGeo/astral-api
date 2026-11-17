@@ -1,0 +1,53 @@
+{
+ "arbitrum.easscan.org": {
+  "total": 417,
+  "srsLocSubstring": 2,
+  "compliant-legacy-noversion": 1,
+  "compliant-v0.2": 1
+ },
+ "base-sepolia.easscan.org": {
+  "total": 2800,
+  "srsLocSubstring": 5,
+  "compliant-legacy-noversion": 1,
+  "compliant-v0.2": 4
+ },
+ "base.easscan.org": {
+  "total": 2049,
+  "srsLocSubstring": 2,
+  "compliant-legacy-noversion": 1,
+  "compliant-v0.2": 1
+ },
+ "celo.easscan.org": {
+  "total": 163,
+  "srsLocSubstring": 2,
+  "compliant-legacy-noversion": 1,
+  "compliant-v0.2": 1
+ },
+ "easscan.org": {
+  "total": 440,
+  "srsLocSubstring": 1,
+  "compliant-v0.2": 1
+ },
+ "optimism-sepolia.easscan.org": {
+  "total": 853,
+  "srsLocSubstring": 4,
+  "near-compliant": 2,
+  "compliant-v0.2": 2
+ },
+ "optimism.easscan.org": {
+  "total": 845,
+  "srsLocSubstring": 4,
+  "compliant-legacy-noversion": 1,
+  "near-compliant": 1,
+  "compliant-v0.2": 2
+ },
+ "sepolia.easscan.org": {
+  "total": 4584,
+  "srsLocSubstring": 30,
+  "near-compliant": 5,
+  "compliant-legacy-noversion": 5,
+  "compliant-v0.1 (uint version, per spec appendix)": 6,
+  "missing-required": 12,
+  "compliant-v0.2": 14
+ }
+}

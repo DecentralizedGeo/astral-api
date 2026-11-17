@@ -1,0 +1,37 @@
+
+## sepolia.easscan.org 0xba4171c925 n=340 pages=12 offchain=21 revoked=0
+  srs [["EPSG:4326",325],["EPSG:3857",15]]
+  locationType [["DecimalDegrees<string>",217],["geojson",79],["geojson-point",21],["coordinate-decimal+lat-lon",12],["geojson-polygon",6],["Point",2],["Polygon",2],["LineString",1]]
+
+## base.easscan.org 0xba4171c925 n=556 pages=19 offchain=0 revoked=0
+  srs [["EPSG:4326",383],["gps",40]]
+  locationType [["GeoJSON",286],["DecimalDegrees<string>",97],["GeoJSON:Point",40]]
+
+## sepolia.easscan.org 0xde87be8a0b n=472 pages=16 offchain=0 revoked=0
+  lp_version [["1.0.0",472]]
+  srs [["urn:ogc:def:crs:EPSG::4326",472]]
+  location_type [["geojson",462],["geojson-point",10]]
+
+## base-sepolia.easscan.org 0xde87be8a0b n=36 pages=2 offchain=0 revoked=0
+  lp_version [["1.0.0",36]]
+  srs [["urn:ogc:def:crs:EPSG::4326",36]]
+  location_type [["geojson",34],["geojson-point",2]]
+
+## sepolia.easscan.org 0x3902cc7b8e n=24 pages=1 offchain=1 revoked=0
+  lp_version [["1.0.0",24]]
+  srs [["http://www.opengis.net/def/crs/OGC/1.3/C",24]]
+  location_type [["address",18],["geojson-point",6]]
+
+## sepolia.easscan.org 0x7e142d0cf9 n=23 pages=1 offchain=0 revoked=0
+  lp_version [["0.2.0",23]]
+  srs [["http://www.opengis.net/def/crs/OGC/1.3/C",23]]
+  location_type [["geojson-point",23]]
+
+## sepolia.easscan.org 0xcb0405c020 n=13 pages=1 offchain=0 revoked=0
+  srs [["EPSG:4326",13]]
+  locationType [["decimalDegrees",13]]
+  specVersion [["1",13]]
+
+## sepolia.easscan.org 0x5894dbce58 n=24 pages=1 offchain=0 revoked=0
+  srs [["EPSG:4326",24]]
+  locationType [["scaledCoordinates",24]]
