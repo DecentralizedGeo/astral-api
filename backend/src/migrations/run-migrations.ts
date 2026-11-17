@@ -54,6 +54,11 @@ const runMigrations = async () => {
 
       // Start a transaction for this migration
       const client = await pool.connect();
+      // Surface RAISE NOTICE output (e.g. backfill row counts) from migrations
+      const logNotice = (notice: { message?: string }) => {
+        if (notice.message) console.log(`  [${file}] ${notice.message}`);
+      };
+      client.on('notice', logNotice);
       try {
         await client.query('BEGIN');
         await client.query(sql);
@@ -68,6 +73,7 @@ const runMigrations = async () => {
         console.error(`Error applying migration ${file}:`, error);
         throw error;
       } finally {
+        client.off('notice', logNotice);
         client.release();
       }
     }

@@ -25,6 +25,10 @@ This guide provides instructions for setting up Supabase to work with the Astral
 3. [`003_create_sync_history.sql`](backend/src/migrations/003_create_sync_history.sql):
    - Creates the `sync_history` table for storing sync run stats as JSONB
    - Adds an index on `created_at`
+4. [`004_geometry_from_coordinates.sql`](backend/src/migrations/004_geometry_from_coordinates.sql):
+   - Adds a trigger that sets `geometry` from `longitude`/`latitude` on every insert and update, so rows written through any path (including the Supabase client fallback) are found by spatial queries
+   - Backfills existing rows that have coordinates but no geometry. The SQL Editor shows a notice with how many rows were fixed.
+   - Safe to run more than once
 
 > **How to run:**
 >

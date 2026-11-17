@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { supabaseService } from '../services/supabase.service';
 import dotenv from 'dotenv';
 
@@ -169,7 +171,23 @@ async function setupSupabaseDb() {
     } else {
       console.log('Successfully created update trigger');
     }
-    
+
+    // Derive geometry from longitude/latitude on every write and backfill
+    // existing rows. Shares the SQL with the pg migration so both paths match.
+    console.log('Creating geometry trigger and backfilling geometry...');
+    const geometryTriggerSQL = fs.readFileSync(
+      path.join(__dirname, '../migrations/004_geometry_from_coordinates.sql'),
+      'utf8'
+    );
+    const { error: geometryTriggerError } = await client.rpc('execute_sql', {
+      sql: geometryTriggerSQL
+    });
+    if (geometryTriggerError) {
+      console.error('Error creating geometry trigger:', geometryTriggerError);
+    } else {
+      console.log('Successfully created geometry trigger and backfilled geometry');
+    }
+
     // Check and create worker_stats table
     if (await tableExists('worker_stats')) {
       console.log('Table worker_stats already exists, skipping creation.');
